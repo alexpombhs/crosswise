@@ -1,0 +1,7 @@
+export const radians=x=>x*Math.PI/180;
+export function distance(a,b){const lat1=radians(a[1]),lat2=radians(b[1]),dLat=lat2-lat1,dLon=radians(b[0]-a[0]);const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 12742000*Math.asin(Math.min(1,Math.sqrt(h)));}
+export function nearRoute(point,path){let best=Infinity;const latitude=radians(point[1]);const xy=([lon,lat])=>[radians(lon-point[0])*Math.cos(latitude)*6371000,radians(lat-point[1])*6371000];for(let i=1;i<path.length;i++){const [ax,ay]=xy(path[i-1]),[bx,by]=xy(path[i]);const dx=bx-ax,dy=by-ay,t=Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy||1)));best=Math.min(best,Math.hypot(ax+t*dx,ay+t*dy));}return best;}
+export function bounds(path,pad=.0006){return [Math.min(...path.map(x=>x[1]))-pad,Math.min(...path.map(x=>x[0]))-pad,Math.max(...path.map(x=>x[1]))+pad,Math.max(...path.map(x=>x[0]))+pad];}
+export function decodePolyline6(shape){let lat=0,lon=0,index=0;const out=[];function num(){let r=0,shift=0,byte;do{byte=shape.charCodeAt(index++)-63;r|=(byte&31)<<shift;shift+=5;}while(byte>=32&&index<shape.length);return r&1?~(r>>1):r>>1;}while(index<shape.length){lat+=num();lon+=num();out.push([lon/1e6,lat/1e6]);}return out;}
+export function scoreColor(n){if(!Number.isFinite(n)||n<0||n>100)return'unscored';return n<50?'red':n<80?'orange':'green';}
+export function averageScores(cs){const ok=cs.filter(c=>Number.isFinite(c.score)&&c.score>=0&&c.score<=100);return{value:ok.length?Math.round(ok.reduce((s,c)=>s+c.score,0)/ok.length):null,covered:ok.length,total:cs.length};}

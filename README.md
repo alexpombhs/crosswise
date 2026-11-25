@@ -23,6 +23,15 @@ Then open `http://localhost:8000`. To test calculations: `node --test src/geo.te
 
 **Important:** The services require internet access. GPS works only on secure contexts (`https://` or `localhost`) and only with permission. The application does not store or transmit GPS positions until a route is requested; after requesting a route, the start/destination coordinates are sent to the routing service.
 
+## Install on a phone
+
+Open the deployed HTTPS URL on your phone.
+
+- **iPhone (Safari)** — Open the Share menu, choose **Add to Home Screen**, and tap **Add**.
+- **Android (Chrome)** — Open the browser menu and choose **Install app** or **Add to Home screen**.
+
+The installed app opens in its own window. Live maps, address search, and directions require an internet connection. A phone's localhost refers to the phone itself, so use the deployed HTTPS URL for installation on a phone.
+
 ## Data and scientific limitations
 
 The file [`data/crossings.json`](data/crossings.json) starts empty **on purpose**. No crossing-level safety scores have been verified yet. Publicly mapped crossings render gray with `—`, not an invented numerical score. Once scoring is supported by methodology and site observations, add reviewed records, for example:

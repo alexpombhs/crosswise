@@ -1,28 +1,21 @@
+import { attachAddressLookup, resolveAddress } from './address-lookup.js';
 import { distance, nearRoute, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
 
 const $ = id => document.getElementById(id);
-const state = { map:null, gps:null, gpsWatch:null, markers:[], endpoints:[], route:null, crossingScores:[], cachedGeocodes:new Map(), lastGeocode:0, loaded:false };
+const state = { map:null, gps:null, gpsWatch:null, markers:[], endpoints:[], route:null, crossingScores:[], loaded:false };
 const coords = [-71.2748, 42.4903]; // Bedford, MA approximate initial viewport; not a crosswalk location.
 const mapStyle = 'https://tiles.openfreemap.org/styles/liberty';
 const routeEndpoint = 'https://valhalla1.openstreetmap.de/route';
-const geocodeEndpoint = 'https://nominatim.openstreetmap.org/search';
+// Allow for minor coordinate differences between the route shape and OSM crossing points.
+const crossingMatchMeters = 3;
 const overpassEndpoint = 'https://overpass-api.de/api/interpreter';
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function setBusy(b){$('find').disabled=b;$('find').innerHTML=b?'Finding walking route…':'Find walking route <span>→</span>';}
 function mapReady(){if(state.map&&state.loaded)return true;status('Map is still loading. Check your connection.',true);return false;}
 function coordPair(text){const m=text.trim().match(/^\s*([-+]?\d{1,2}(?:\.\d+)?)\s*,\s*([-+]?\d{1,3}(?:\.\d+)?)\s*$/);if(!m)return null;const lat=Number(m[1]),lon=Number(m[2]);return Math.abs(lat)<=90&&Math.abs(lon)<=180?[lon,lat]:null;}
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function resolvePlace(text){
- const exact=coordPair(text);if(exact)return exact;
- const key=text.trim().toLowerCase();if(!key)throw Error('Please enter an address or place.');
- if(state.cachedGeocodes.has(key))return state.cachedGeocodes.get(key);
- await sleep(Math.max(0,1150-(Date.now()-state.lastGeocode)));state.lastGeocode=Date.now();
- // No autocomplete; geocoding happens on the explicit Find route action only.
- const url=new URL(geocodeEndpoint);url.searchParams.set('format','jsonv2');url.searchParams.set('limit','1');url.searchParams.set('countrycodes','us');url.searchParams.set('q',text.includes(',')?text:`${text}, Massachusetts, USA`);
- const r=await fetch(url,{headers:{Accept:'application/json'}});if(!r.ok)throw Error('Address lookup is temporarily unavailable.');
- const items=await r.json();if(!items.length)throw Error(`Could not find “${text}”. Try a more specific address.`);
- const loc=[Number(items[0].lon),Number(items[0].lat)];state.cachedGeocodes.set(key,loc);return loc;
+function resolvePlace(text) {
+ return coordPair(text) ?? resolveAddress(text);
 }
 function markerElement(cls){const e=document.createElement('div');e.className=cls;return e;}
 function clearMarkers(collection){for(const m of collection)m.remove();collection.length=0;}
@@ -30,8 +23,12 @@ function locate(){
  if(!('geolocation' in navigator)){status('Geolocation is unavailable in this browser.',true);return;}
  status('Requesting location permission…');
  if(state.gpsWatch!==null)navigator.geolocation.clearWatch(state.gpsWatch);
+ const startValue = $('from').value;
+ let firstPosition = true;
  state.gpsWatch=navigator.geolocation.watchPosition(position=>{
-  state.gps=[position.coords.longitude,position.coords.latitude];$('from').value='Current location';
+  state.gps=[position.coords.longitude,position.coords.latitude];
+  if (firstPosition && $('from').value === startValue) $('from').value='Current location';
+  firstPosition = false;
   if(state.gpsMarker)state.gpsMarker.setLngLat(state.gps);else if(state.map)state.gpsMarker=new maplibregl.Marker({element:markerElement('map-gps')}).setLngLat(state.gps).addTo(state.map);
   if(state.map)state.map.easeTo({center:state.gps,zoom:Math.max(15,state.map.getZoom()),duration:750});
   status('Current position acquired. Enter a destination and choose Find walking route.');
@@ -41,7 +38,17 @@ function mapBounds(path){let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-In
 function renderLine(coordinates){
  if(!state.map.getSource('walking-route'))return;
  state.map.getSource('walking-route').setData({type:'Feature',geometry:{type:'LineString',coordinates},properties:{}});
- state.map.fitBounds(mapBounds(coordinates),{padding:{top:140,bottom:170,left:Math.min(390,window.innerWidth*.25),right:Math.min(370,window.innerWidth*.24)},maxZoom:17.5,duration:800});
+ const mapRect = $('map').getBoundingClientRect();
+ const mobile = window.innerWidth <= 850;
+ const padding = mobile
+  ? {
+     top: Math.min(mapRect.height * .42, document.querySelector('.planner').getBoundingClientRect().bottom - mapRect.top + 12),
+     bottom: Math.min(mapRect.height * .36, mapRect.bottom - document.querySelector('.results').getBoundingClientRect().top + 12),
+     left: 24,
+     right: 24,
+    }
+  : {top:140,bottom:170,left:Math.min(390,window.innerWidth*.25),right:Math.min(370,window.innerWidth*.24)};
+ state.map.fitBounds(mapBounds(coordinates),{padding,maxZoom:17.5,duration:800});
 }
 function routeMarkers(origin,destination){
  clearMarkers(state.endpoints);
@@ -62,10 +69,19 @@ function renderDirections(maneuvers){$('directions').replaceChildren();for(const
 function updateResult(route,crossings){
  $('empty').hidden=true;$('route-result').hidden=false;
  $('minutes').textContent=route.minutes;$('distance').textContent=`${Number(route.miles).toFixed(2)} mi`;
- $('count').textContent=crossings.length;
+ $('count').textContent=crossings === null ? '—' : crossings.length;
+ if (crossings === null) {
+  $('overall').textContent='—';
+  $('overall').style.color='';
+  $('crossing-list').replaceChildren();
+  renderDirections(route.maneuvers);
+  return;
+ }
  const avg=averageScores(crossings);$('overall').textContent=avg.value===null?'—':avg.value;
  const score=$('overall');score.style.color=avg.value===null?'#16384d':{red:'#c94c45',orange:'#c47d16',green:'#23845d'}[scoreColor(avg.value)];
- $('coverage').textContent=crossings.length?`${avg.covered} of ${avg.total} crossings have verified research scores. The average uses scored crossings only; missing scores are not zero.`:'No mapped crossing nodes were identified along this route. This does not mean the route has no crossings.';
+ $('coverage').textContent = !crossings.length ? 'No mapped crossings matched this route.'
+  : !avg.covered ? 'No verified scores for these crossings.'
+  : `Average based on ${avg.covered} of ${avg.total} matched crossings.`;
  const list=$('crossing-list');list.replaceChildren();
  if(!crossings.length){const p=document.createElement('p');p.textContent='No crossing details available for this route.';list.append(p);}
  for(const c of crossings){
@@ -85,25 +101,52 @@ function matchScore(c,items){
  // Only source-backed, manually reviewed 0–100 scores are displayed. Missing is unknown.
  return candidate?.reviewed===true&&typeof candidate.source==='string'&&candidate.source.trim()&&Number.isFinite(candidate.safetyScore)&&candidate.safetyScore>=0&&candidate.safetyScore<=100?candidate.safetyScore:null;
 }
+let crossingInventory;
+function loadCrossingInventory() {
+ crossingInventory ??= fetch(new URL('../data/bedford-crossings.json', import.meta.url))
+  .then(response => {
+   if (!response.ok) throw Error('Bedford crossing data is temporarily unavailable.');
+   return response.json();
+  })
+  .catch(error => {
+   crossingInventory = undefined;
+   throw error;
+  });
+ return crossingInventory;
+}
+async function queryCrossings(bbox) {
+ const [south, west, north, east] = bbox;
+ if (north-south>0.08||east-west>0.12) throw Error('The route is too long to retrieve crossings in one request.');
+ const box = `(${bbox.map(coordinate => coordinate.toFixed(6)).join(',')})`;
+ const query = `[out:json][timeout:22];(node["highway"="crossing"]${box};way["highway"="crossing"]${box};way["footway"="crossing"]${box};);out center;`;
+ const r = await fetch(overpassEndpoint, {method:'POST', body:new URLSearchParams({data:query})});
+ if (!r.ok) throw Error('Crosswalk map service is temporarily unavailable.');
+ const data = await r.json();
+ if (data.remark || !Array.isArray(data.elements)) throw Error('Crosswalk map service returned incomplete results.');
+ return data.elements.map(n => ({
+  osmType:n.type, osmId:n.id, lon:n.lon??n.center?.lon, lat:n.lat??n.center?.lat,
+  name:n.tags?.name || n.tags?.['addr:street'],
+ }));
+}
 async function loadCrossings(path){
- const bbox=bounds(path);const south=bbox[0],west=bbox[1],north=bbox[2],east=bbox[3];
- if(north-south>0.08||east-west>0.12)throw Error('The route is too long to retrieve crossings in one request.');
- const box=`(${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)})`;
- const query=`[out:json][timeout:22];(node["highway"="crossing"]${box};way["highway"="crossing"]${box};);out center;`;
- const r=await fetch(overpassEndpoint,{method:'POST',body:new URLSearchParams({data:query})});
- if(!r.ok)throw Error('Crosswalk map service is temporarily unavailable.');
- const data=await r.json();
- const candidates=(data.elements||[]).map(n=>({osmType:n.type,osmId:n.id,lon:n.lon??n.center?.lon,lat:n.lat??n.center?.lat,tags:n.tags||{}}))
-  .filter(n=>Number.isFinite(n.lon)&&Number.isFinite(n.lat)&&nearRoute([n.lon,n.lat],path)<=20);
+ const bbox = bounds(path);
+ const inventory = await loadCrossingInventory().catch(() => null);
+ const insideInventory = inventory && bbox.every((edge, index) =>
+  index < 2 ? edge >= inventory.bounds[index] : edge <= inventory.bounds[index]);
+ const records = insideInventory ? inventory.crossings : await queryCrossings(bbox);
+ const candidates = records
+  .map(c => ({...c, metersFromRoute:nearRoute([c.lon,c.lat],path)}))
+  .filter(c => c.metersFromRoute <= crossingMatchMeters)
+  .sort((a,b) => a.metersFromRoute - b.metersFromRoute);
  // Remove duplicate representations of the same physical crossing.
  const unique=[];
  for(const c of candidates){if(!unique.some(x=>distance([x.lon,x.lat],[c.lon,c.lat])<8))unique.push(c);}
- return unique.slice(0,80).map(c=>({...c,name:c.tags.name||c.tags['addr:street']||'Marked crossing',score:matchScore(c,state.crossingScores)}));
+ return unique.slice(0,80).map(c=>({...c,name:c.name||'Mapped crossing',score:matchScore(c,state.crossingScores)}));
 }
 function renderCrossings(crossings){
  clearMarkers(state.markers);
  for(const c of crossings){const e=document.createElement('button');e.type='button';e.className='map-crossing';e.title=Number.isFinite(c.score)?`Crossing score ${c.score}`:'Crossing · score not yet available';e.setAttribute('aria-label',e.title);
-  const dot=document.createElement('span');dot.className=scoreColor(c.score);dot.textContent=Number.isFinite(c.score)?c.score:'—';e.append(dot);
+  const dot=document.createElement('span');dot.className=scoreColor(c.score);dot.textContent=Number.isFinite(c.score)?c.score:'';e.append(dot);
   const popup=new maplibregl.Popup({offset:20,className:'crossing-popup'}).setHTML(`<b>${escapeHtml(c.name)}</b><small>${Number.isFinite(c.score)?'Research score: '+c.score+'/100':'Mapped OSM crossing — not yet scored'}.</small>`);
   c.marker=new maplibregl.Marker({element:e,anchor:'center'}).setLngLat([c.lon,c.lat]).setPopup(popup).addTo(state.map);
   state.markers.push(c.marker);
@@ -111,9 +154,19 @@ function renderCrossings(crossings){
 }
 async function refreshCrossings(){
  if(!state.route)return;
+ const route = state.route;
  $('refresh').disabled=true;$('coverage').textContent='Locating mapped crossings near your route…';
- try{const crossings=await loadCrossings(state.route.path);renderCrossings(crossings);updateResult(state.route,crossings);status(`Route ready. ${crossings.length} mapped crossing locations near the walking route.`);}
- catch(e){renderCrossings([]);updateResult(state.route,[]);$('coverage').textContent=`Unable to load crossing inventory: ${e.message} Score information is unavailable; walking directions still work.`;status('Walking route found, but crosswalk data could not be loaded.',true);}
+ try {
+  const crossings = await loadCrossings(route.path);
+  if (state.route !== route) return;
+  renderCrossings(crossings);updateResult(route,crossings);
+  status(`Route ready. ${crossings.length} mapped crossings matched to the route.`);
+ } catch(e) {
+  if (state.route !== route) return;
+  renderCrossings([]);updateResult(route,null);
+  $('coverage').textContent=`Crossing inventory unavailable. ${e.message}`;
+  status('Walking route found, but crosswalk data could not be loaded.',true);
+ }
  finally{$('refresh').disabled=false;}
 }
 async function calculate(){
@@ -124,7 +177,12 @@ async function calculate(){
   const from=($('from').value.trim().toLowerCase()==='current location'&&state.gps)?state.gps:await resolvePlace($('from').value);
   const to=await resolvePlace($('to').value);
   if(distance(from,to)<40)throw Error('Starting point and destination are too close.');
-  const r=await requestWalkingRoute(from,to);state.route=r;renderLine(r.path);routeMarkers(from,to);renderCrossings([]);updateResult(r,[]);
+   const r=await requestWalkingRoute(from,to);
+  state.route=r;
+  $('crossing-details').open=false;
+  routeMarkers(from,to);renderCrossings([]);updateResult(r,null);
+  $('coverage').textContent='Locating mapped crossings…';
+  renderLine(r.path);
   status('Walking route ready. Checking crosswalk locations…');await refreshCrossings();
  }catch(e){status(e.message||'Could not calculate the route.',true);}
  finally{setBusy(false);}
@@ -153,7 +211,10 @@ $('gps').addEventListener('click',locate);
 $('locate').addEventListener('click',()=>{if(!state.gps)locate();else state.map?.flyTo({center:state.gps,zoom:16});});
 $('find').addEventListener('click',calculate);$('clear').addEventListener('click',clear);
 $('refresh').addEventListener('click',refreshCrossings);
-$('from').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('to').focus();}});
-$('to').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();calculate();}});
+for (const field of ['from', 'to']) {
+ attachAddressLookup($(field), $(`${field}-suggestions`), $(`${field}-lookup-status`));
+}
+$('from').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.defaultPrevented&&!e.isComposing){e.preventDefault();$('to').focus();}});
+$('to').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.defaultPrevented&&!e.isComposing){e.preventDefault();calculate();}});
 state.crossingScores=await loadScoredCrossings();
 initializeMap();

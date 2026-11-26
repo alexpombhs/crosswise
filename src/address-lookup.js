@@ -55,6 +55,7 @@ export function attachAddressLookup(input, list, message) {
   function select(index) {
     input.value = matches[index].label;
     close();
+    input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   async function update() {

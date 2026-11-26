@@ -8,18 +8,19 @@ An MSEF engineering research prototype for comparing the **estimated** pedestria
 - **From / To** dropdowns for Bedford street addresses, with optional **Use my location** (browser GPS permission).
 - A real pedestrian route with walking distance, time estimate, path line, and textual turn-by-turn steps from **Valhalla**.
 - **OpenStreetMap crossings** matched within 3 meters of the walking route geometry. Bedford-area routes use a bundled snapshot.
-- **0–100 crossing score** markers only for independently reviewed, source-backed data: red **0–49**, orange **50–79**, green **80–100**.
-- Route score = **arithmetic mean of available crossing scores**, with coverage displayed. Unknown/missing crossing scores are *never* assigned zero or made-up values.
+- **0–100 crossing score** markers use reviewed research data where available and labeled demo values elsewhere: red **0–49**, orange **50–79**, green **80–100**.
+- Route scores are the arithmetic mean of matched crossing scores. A route score is labeled **Demo** if any included score is simulated.
 
 ## Start locally
 
-No build process or API key required for the proof-of-concept static site. Serve the directory over localhost:
+Install dependencies and start Vite locally:
 
 ```bash
-python3 -m http.server 8000
+npm ci
+npm run dev
 ```
 
-Then open `http://localhost:8000`. To test calculations: `node --test src/geo.test.mjs`.
+Open the localhost URL printed by Vite. Run `npm test` for the geometry tests or `npm run build` to generate a static deployment in `dist/`. Crosswise UI components wrap Material UI in `src/components.jsx` and use the Crosswise theme.
 
 **Important:** The services require internet access. GPS works only on secure contexts (`https://` or `localhost`) and only with permission. The application does not store or transmit GPS positions until a route is requested; after requesting a route, the start/destination coordinates are sent to the routing service.
 
@@ -34,7 +35,7 @@ The installed app opens in its own window. Live maps and directions require an i
 
 ## Data and scientific limitations
 
-The file [`data/crossings.json`](data/crossings.json) starts empty **on purpose**. No crossing-level safety scores have been verified yet. Publicly mapped crossings render gray with `—`, not an invented numerical score. Once scoring is supported by methodology and site observations, add reviewed records, for example:
+The file [`data/crossings.json`](data/crossings.json) starts empty **on purpose**. No crossing-level safety scores have been verified yet. The app generates separate, repeatable demo scores for publicly mapped crossings without reviewed scores. Once scoring is supported by methodology and site observations, add reviewed records, for example:
 
 ```json
 [
@@ -60,7 +61,7 @@ The file [`data/crossings.json`](data/crossings.json) starts empty **on purpose*
 | GPS | Browser Geolocation API | Explicit permission on user action |
 | Address search | [MassGIS Master Address Points](https://www.mass.gov/info-details/massgis-data-master-address-data-basic-address-points) | Bundled Bedford municipality snapshot. The browser searches locally after loading it. |
 | Pedestrian directions | [Valhalla public demo](https://valhalla.openstreetmap.de/) | Fair-use rate limits; needs a hosted routing provider for scaled production |
-| Crossing coordinates | [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright) | Bundled Bedford-area snapshot under ODbL. Routes outside the snapshot coverage use [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API). |
+| Crossing coordinates | [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright) | Bundled Bedford-area snapshot under ODbL. Road names and lane counts come from mapped road ways that share nodes with crossings. Markings, signals, islands, and tactile paving come from crossing tags. Routes outside the snapshot coverage use [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API). |
 
 Public demo services are not guaranteed available or suitable for high-traffic deployment. For a permanent community site, configure an appropriate commercial/hosted, campus, or self-hosted geocoding/routing provider, use a rate-limited server proxy/cache, and arrange fair-use compliance. Keep OSM/tiles attribution visible on the map.
 

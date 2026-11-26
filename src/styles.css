@@ -217,11 +217,37 @@ button:disabled { cursor: default; opacity: .6; }
 .map-gps { box-shadow: 0 0 0 7px #46a5da55; }
 
 .bottom-nav { display: grid; grid-template-columns: repeat(4, 1fr); min-height: calc(84px + env(safe-area-inset-bottom)); padding: 10px 8px calc(12px + env(safe-area-inset-bottom)); background: white; }
-.bottom-nav button { display: grid; place-items: center; align-content: start; gap: 5px; border: 0; background: transparent; color: var(--muted); font-size: 11px; }
-.bottom-nav button span { display: grid; place-items: center; width: 47px; height: 31px; border-radius: 18px; }
-.bottom-nav [aria-disabled="true"] { opacity: .6; cursor: default; }
-.bottom-nav [aria-current] { color: var(--blue); font-weight: 600; }
-.bottom-nav [aria-current] span { background: var(--mint); }
+.bottom-nav .MuiButtonBase-root {
+  display: grid;
+  place-items: center;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+}
+.bottom-nav button + button::before {
+  content: "";
+  position: absolute;
+  inset-block: 4px;
+  inset-inline-start: 0;
+  border-inline-start: 1px solid #dce7eb;
+  pointer-events: none;
+}
+.bottom-nav .nav-icon {
+  display: grid;
+  place-items: center;
+  width: 47px;
+  height: 31px;
+  border-radius: 18px;
+}
+.bottom-nav .nav-icon img { display: block; width: 21px; height: 21px; }
+.bottom-nav [aria-disabled="true"] { cursor: default; }
+.bottom-nav [aria-disabled="true"] > :is(.nav-icon, .nav-label) { opacity: .6; }
+.bottom-nav .MuiButtonBase-root[aria-current] { color: var(--blue); font-weight: 600; }
+.bottom-nav [aria-current] .nav-icon { background: var(--mint); }
 dialog { max-width: min(90vw, 420px); border: 1px solid var(--line); border-radius: 16px; padding: 20px; color: var(--ink); }
 dialog::backdrop { background: #15334866; }
 

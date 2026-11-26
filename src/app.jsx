@@ -125,10 +125,10 @@ function App() {
           <p id="status" role="status" aria-live="polite"></p>
         </main>
         <nav className="bottom-nav" aria-label="Main navigation">
-          <CrosswiseAction type="button" id="nav-map" aria-current="page"><span><img src={figmaIcon("map-active")} alt="" /></span>Map</CrosswiseAction>
-          <CrosswiseAction type="button" id="nav-routes"><span><img src={figmaIcon("routes")} alt="" /></span>Routes</CrosswiseAction>
-          <CrosswiseAction type="button" id="nav-simulate" aria-disabled="true" title="Open a crossing to simulate treatments"><span><img src={figmaIcon("simulate")} alt="" /></span>Simulate</CrosswiseAction>
-          <CrosswiseAction type="button" id="nav-sources"><span><img src={figmaIcon("sources")} alt="" /></span>Sources</CrosswiseAction>
+          <CrosswiseAction type="button" id="nav-map" aria-current="page"><span className="nav-icon"><img src={figmaIcon("map-active")} alt="" /></span><span className="nav-label">Map</span></CrosswiseAction>
+          <CrosswiseAction type="button" id="nav-routes"><span className="nav-icon"><img src={figmaIcon("routes")} alt="" /></span><span className="nav-label">Routes</span></CrosswiseAction>
+          <CrosswiseAction type="button" id="nav-simulate" aria-disabled="true" title="Open a crossing to simulate treatments"><span className="nav-icon"><img src={figmaIcon("simulate")} alt="" /></span><span className="nav-label">Simulate</span></CrosswiseAction>
+          <CrosswiseAction type="button" id="nav-sources"><span className="nav-icon"><img src={figmaIcon("sources")} alt="" /></span><span className="nav-label">Sources</span></CrosswiseAction>
         </nav>
       </div>
       <dialog id="sources-dialog">

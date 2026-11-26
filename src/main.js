@@ -9,7 +9,7 @@ const geocodeEndpoint = 'https://nominatim.openstreetmap.org/search';
 const overpassEndpoint = 'https://overpass-api.de/api/interpreter';
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function setBusy(b){$('find').disabled=b;$('find').innerHTML=b?'Finding walking route…':'Find walking route <span>→</span>';}
+function setBusy(b){$('find').disabled=b;$('clear').disabled=b;$('find').innerHTML=b?'Finding walking route…':'Find walking route <span>→</span>';}
 function mapReady(){if(state.map&&state.loaded)return true;status('Map is still loading. Check your connection.',true);return false;}
 function coordPair(text){const m=text.trim().match(/^\s*([-+]?\d{1,2}(?:\.\d+)?)\s*,\s*([-+]?\d{1,3}(?:\.\d+)?)\s*$/);if(!m)return null;const lat=Number(m[1]),lon=Number(m[2]);return Math.abs(lat)<=90&&Math.abs(lon)<=180?[lon,lat]:null;}
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -41,7 +41,18 @@ function mapBounds(path){let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-In
 function renderLine(coordinates){
  if(!state.map.getSource('walking-route'))return;
  state.map.getSource('walking-route').setData({type:'Feature',geometry:{type:'LineString',coordinates},properties:{}});
- state.map.fitBounds(mapBounds(coordinates),{padding:{top:140,bottom:170,left:Math.min(390,window.innerWidth*.25),right:Math.min(370,window.innerWidth*.24)},maxZoom:17.5,duration:800});
+ const map = $('map-view').getBoundingClientRect();
+ const planner = document.querySelector('.planner').getBoundingClientRect();
+ const results = document.querySelector('.results').getBoundingClientRect();
+ const controls = document.querySelector('.zoom-controls').getBoundingClientRect();
+ const panelsOverlayMap = getComputedStyle($('map-view')).position === 'absolute';
+ const padding = panelsOverlayMap ? {
+  top: 90,
+  bottom: 36,
+  left: planner.right - map.left + 16,
+  right: map.right - Math.min(results.left, controls.left) + 16,
+ } : {top: 32, bottom: 40, left: 32, right: map.right - controls.left + 12};
+ state.map.fitBounds(mapBounds(coordinates), {padding, maxZoom: 17.5, duration: 800});
 }
 function routeMarkers(origin,destination){
  clearMarkers(state.endpoints);
@@ -71,7 +82,12 @@ function updateResult(route,crossings){
  for(const c of crossings){
   const btn=document.createElement('button');btn.type='button';btn.className='crossing-item';const sc=scoreColor(c.score);const value=Number.isFinite(c.score)?String(c.score):'—';
   btn.innerHTML=`<span class="score-dot ${sc}">${value}</span><span><strong>${escapeHtml(c.name)}</strong><small>${Number.isFinite(c.score)?'Research score · '+c.score+'/100':'Crossing found in OpenStreetMap · not yet scored'}</small></span>`;
-  btn.addEventListener('click',()=>{state.map.flyTo({center:[c.lon,c.lat],zoom:17.7});c.marker?.togglePopup();});list.append(btn);
+  btn.addEventListener('click', () => {
+   showMap();
+   state.map.flyTo({center: [c.lon, c.lat], zoom: 17.7});
+   const popup = c.marker?.getPopup();
+   if (popup && !popup.isOpen()) c.marker.togglePopup();
+  });list.append(btn);
  }
  renderDirections(route.maneuvers);
 }
@@ -109,15 +125,22 @@ function renderCrossings(crossings){
   state.markers.push(c.marker);
  }
 }
+function showMap() {
+ const mapView = $('map-view');
+ if (getComputedStyle(mapView).position === 'absolute') return;
+ mapView.focus({preventScroll: true});
+ mapView.scrollIntoView({block: 'start'});
+}
 async function refreshCrossings(){
- if(!state.route)return;
+ const route = state.route;
+ if (!route) return;
  $('refresh').disabled=true;$('coverage').textContent='Locating mapped crossings near your route…';
- try{const crossings=await loadCrossings(state.route.path);renderCrossings(crossings);updateResult(state.route,crossings);status(`Route ready. ${crossings.length} mapped crossing locations near the walking route.`);}
- catch(e){renderCrossings([]);updateResult(state.route,[]);$('coverage').textContent=`Unable to load crossing inventory: ${e.message} Score information is unavailable; walking directions still work.`;status('Walking route found, but crosswalk data could not be loaded.',true);}
+ try{const crossings=await loadCrossings(route.path);if (state.route !== route) return;renderCrossings(crossings);updateResult(state.route,crossings);status(`Route ready. ${crossings.length} mapped crossing locations near the walking route.`);}
+ catch(e){if (state.route !== route) return;renderCrossings([]);updateResult(state.route,[]);$('coverage').textContent=`Unable to load crossing inventory: ${e.message} Score information is unavailable; walking directions still work.`;status('Walking route found, but crosswalk data could not be loaded.',true);}
  finally{$('refresh').disabled=false;}
 }
 async function calculate(){
- if(!mapReady())return;
+ if ($('find').disabled || !mapReady()) return;
  if(!$('to').value.trim()){status('Enter a destination.',true);$('to').focus();return;}
  setBusy(true);status('Looking up places and calculating a pedestrian route…');
  try{
@@ -125,7 +148,9 @@ async function calculate(){
   const to=await resolvePlace($('to').value);
   if(distance(from,to)<40)throw Error('Starting point and destination are too close.');
   const r=await requestWalkingRoute(from,to);state.route=r;renderLine(r.path);routeMarkers(from,to);renderCrossings([]);updateResult(r,[]);
-  status('Walking route ready. Checking crosswalk locations…');await refreshCrossings();
+  status('Walking route ready. Checking crosswalk locations…');
+  showMap();
+  await refreshCrossings();
  }catch(e){status(e.message||'Could not calculate the route.',true);}
  finally{setBusy(false);}
 }
@@ -139,7 +164,7 @@ function clear(){
 }
 function initializeMap(){
  if(typeof maplibregl==='undefined'){$('map-loader').textContent='MapLibre could not load. Check your connection.';status('Map JavaScript failed to load.',true);return;}
- const map=new maplibregl.Map({container:'map',style:mapStyle,center:coords,zoom:14,attributionControl:true});state.map=map;
+ const map=new maplibregl.Map({container:'map',style:mapStyle,center:coords,zoom:14,attributionControl:true,cooperativeGestures:true});state.map=map;
  map.on('load',()=>{
   state.loaded=true;$('map-loader')?.remove();
   map.addSource('walking-route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:[]},properties:{}}});

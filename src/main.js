@@ -1,8 +1,9 @@
+import { classifyWalkingPath, loadFootways } from './walking-geometry.js';
 import { renderScenarioExplorer } from './scenario-explorer.jsx';
 import { renderCrossingRows } from './crossing-inventory.jsx';
 import { figmaIcon } from './assets.js';
 import { attachAddressLookup, resolveAddress } from './address-lookup.js';
-import { distance, projectToRoute, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
+import { distance, initialRouteBearing, crossingsAlongPath, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
 
 const $ = id => document.getElementById(id);
 const state = { map:null, gps:null, gpsWatch:null, markers:[], endpoints:[], route:null, routes:[], routeNames:[], detail:null, crossingScores:[], loaded:false };
@@ -65,42 +66,116 @@ function locate(){
    $('from').value='Current location';
    saveDirections();
   }
+  const centerOnFix = firstPosition && document.querySelector('.app').dataset.view === 'planner';
   firstPosition = false;
   if(state.gpsMarker)state.gpsMarker.setLngLat(state.gps);else if(state.map)state.gpsMarker=new maplibregl.Marker({element:markerElement('map-gps')}).setLngLat(state.gps).addTo(state.map);
-  if(state.map)state.map.easeTo({center:state.gps,zoom:Math.max(15,state.map.getZoom()),duration:750});
-  status('Current position acquired. Enter a destination and choose Find walking route.');
+  if (centerOnFix) {
+   state.map?.easeTo({center:state.gps,zoom:Math.max(15,state.map.getZoom()),duration:750});
+   status('Current position acquired. Enter a destination and choose Find walking route.');
+  }
  },err=>{status(err.code===1?'Location access was denied. Enter a starting address instead.':'Could not determine your location. Try an address instead.',true);},{enableHighAccuracy:true,timeout:16000,maximumAge:10000});
 }
 function mapBounds(path){let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;for(const [x,y] of path){minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);}return[[minX,minY],[maxX,maxY]];}
-function renderLine(coordinates, alternatives = []){
- const alternateSource = state.map.getSource('alternate-routes');
- alternateSource?.setData({type:'FeatureCollection',features:alternatives.map(path=>({
-  type:'Feature',geometry:{type:'LineString',coordinates:path},properties:{},
- }))});
- if(!state.map.getSource('walking-route'))return;
- state.map.getSource('walking-route').setData({type:'Feature',geometry:{type:'LineString',coordinates},properties:{}});
+function lineFeature(path, properties = {}) {
+ return {type:'Feature', geometry:{type:'LineString',coordinates:path}, properties};
+}
+function drawRoutes(route, alternatives) {
+ state.map.getSource('alternate-routes')?.setData({
+  type:'FeatureCollection', features:alternatives.map(path=>lineFeature(path)),
+ });
+ state.map.getSource('walking-route')?.setData({
+  type:'FeatureCollection',
+  features:route.walkingGeometry.sections.map(({ path, mapped })=>lineFeature(path,{mapped})),
+ });
+}
+function renderLine(route, { alternatives = [], overview = false } = {}){
+ const coordinates = route.path;
+ drawRoutes(route, alternatives);
+ if (!overview) {
+  focusWalkingStart(coordinates);
+  return;
+ }
  const height = $('map').clientHeight;
  const padding = {top:Math.min(180,height*.36),bottom:Math.min(150,height*.32),left:24,right:24};
- state.map.fitBounds(mapBounds(coordinates.concat(...alternatives)),{padding,maxZoom:17.5,duration:450});
+ state.map.fitBounds(mapBounds(coordinates.concat(...alternatives)),{padding,bearing:0,maxZoom:17.5,duration:450});
+}
+function focusWalkingStart(path) {
+ const mapBounds = $('map').getBoundingClientRect();
+ if (!mapBounds.height) return;
+ const sheetTop = document.querySelector('.results > .route-sheet').getBoundingClientRect().top;
+ const startY = Math.max(mapBounds.height * .53, Math.min(mapBounds.height * .76, sheetTop - mapBounds.top - 24));
+ state.map.easeTo({
+  center:path[0],
+  bearing:initialRouteBearing(path),
+  pitch:0,
+  zoom:17.5,
+  padding:0,
+  offset:[0,startY - mapBounds.height / 2],
+  duration:450,
+ });
 }
 function routeMarkers(origin,destination){
  clearMarkers(state.endpoints);
  state.endpoints.push(new maplibregl.Marker({element:markerElement('map-endpoint')}).setLngLat(origin).addTo(state.map));
  state.endpoints.push(new maplibregl.Marker({element:markerElement('map-endpoint end')}).setLngLat(destination).addTo(state.map));
 }
-async function requestWalkingRoute(origin,destination){
- const payload={locations:[{lat:origin[1],lon:origin[0]},{lat:destination[1],lon:destination[0]}],costing:'pedestrian',alternates:2,units:'miles',directions_type:'instructions',shape_format:'polyline6'};
- const r=await fetch(routeEndpoint,{method:'POST',headers:{'Content-Type':'application/json','X-Client-Id':'crosswise-msef-prototype'},body:JSON.stringify(payload)});
- if(!r.ok)throw Error(r.status===429?'Walking route service is rate-limited. Try again later.':'Walking routing service could not calculate this route.');
- const data=await r.json();
+const maxWalkingRoutes = 3;
+async function requestWalkingRoute(origin,destination) {
+ const basePayload = {
+  locations:[{lat:origin[1],lon:origin[0]},{lat:destination[1],lon:destination[0]}],
+  costing:'pedestrian',
+  alternates:maxWalkingRoutes - 1,
+  units:'miles',
+  directions_type:'instructions',
+  shape_format:'polyline6',
+ };
+ const footways = loadFootways();
+ const preferred = await requestRouteOptions({
+  ...basePayload,
+  costing_options:{pedestrian:{walkway_factor:0.55,sidewalk_factor:0.75}},
+ });
+ let options = preferred;
+ // The standard pedestrian profile can return distinct routes omitted by sidewalk weighting.
+ if (preferred.length < maxWalkingRoutes) {
+  const fallback = new AbortController();
+  const timeout = setTimeout(()=>fallback.abort(),4500);
+  try {
+   const standard = await requestRouteOptions(basePayload,fallback.signal);
+   options = distinctRoutes([...preferred,...standard]);
+  } catch {
+   // Keep the preferred walking options when the additional request fails.
+  } finally {
+   clearTimeout(timeout);
+  }
+ }
+ const index = await footways;
+ return options.map(route=>({...route,walkingGeometry:classifyWalkingPath(route.path,index?.cells,index?.bounds)}));
+}
+async function requestRouteOptions(payload, signal) {
+ const response = await fetch(routeEndpoint,{
+  method:'POST',headers:{'Content-Type':'application/json','X-Client-Id':'crosswise-msef-prototype'},
+  body:JSON.stringify(payload),signal,
+ });
+ if (!response.ok) throw Error(response.status===429
+  ? 'Walking route service is rate-limited. Try again later.'
+  : 'Walking routing service could not calculate this route.');
+ const data = await response.json();
  const primary = parseTrip(data.trip);
  if (!primary) throw Error('No walking route found.');
- const routes = [primary];
- for (const alternate of (data.alternates ?? []).slice(0, 2)) {
-  const option = parseTrip(alternate.trip);
-  if (option && !routes.some(route => route.shape === option.shape)) routes.push(option);
+ const alternates = (data.alternates ?? []).slice(0,maxWalkingRoutes - 1);
+ return distinctRoutes([primary,...alternates.map(option=>parseTrip(option.trip)).filter(Boolean)]);
+}
+function distinctRoutes(routes) {
+ const seen = new Set();
+ const distinct = [];
+ for (const route of routes) {
+  const key = JSON.stringify(route.path);
+  if (seen.has(key)) continue;
+  seen.add(key);
+  distinct.push(route);
+  if (distinct.length === maxWalkingRoutes) break;
  }
- return routes;
+ return distinct;
 }
 function parseTrip(trip) {
  const shape = trip?.legs?.[0]?.shape;
@@ -108,7 +183,7 @@ function parseTrip(trip) {
  const path = typeof shape === 'string' ? decodePolyline6(shape) : shape.coordinates;
  if (!path || path.length < 2) return null;
  return {
-  path, shape, minutes:Math.round(trip.summary.time/60), miles:trip.summary.length,
+  path, minutes:Math.round(trip.summary.time/60), miles:trip.summary.length,
   maneuvers:trip.legs.flatMap(leg=>leg.maneuvers ?? []), crossings:null,
  };
 }
@@ -176,7 +251,8 @@ async function queryCrossings(bbox) {
  if (!r.ok) throw Error('Crosswalk map service is temporarily unavailable.');
  const data = await r.json();
  if (data.remark || !Array.isArray(data.elements)) throw Error('Crosswalk map service returned incomplete results.');
- return data.elements.map(n => ({
+ const crossingNodes = new Set(data.elements.filter(element=>element.type === 'node').map(element=>element.id));
+ return data.elements.filter(element=>!element.nodes?.some(id=>crossingNodes.has(id))).map(n => ({
   osmType:n.type, osmId:n.id, lon:n.lon??n.center?.lon, lat:n.lat??n.center?.lat,
   name:n.tags?.name, roadNames:n.tags?.['addr:street'] ? [n.tags['addr:street']] : [],
  }));
@@ -196,33 +272,27 @@ async function loadCrossings(path){
  const insideInventory = inventory && bbox.every((edge, index) =>
   index < 2 ? edge >= inventory.bounds[index] : edge <= inventory.bounds[index]);
  const records = insideInventory ? inventory.crossings : await queryCrossings(bbox);
- const candidates = records
-  .map(c => ({...c, ...projectToRoute([c.lon,c.lat],path)}))
-  .filter(c => c.meters <= crossingMatchMeters)
-  .sort((a,b) => a.meters - b.meters);
- // Remove duplicate representations of the same physical crossing.
- const unique=[];
- for(const c of candidates){if(!unique.some(x=>distance([x.lon,x.lat],[c.lon,c.lat])<8))unique.push(c);}
- return unique.sort((a,b)=>a.position-b.position).map(c=>{
+ // Match each mapped crossing by its source identity. Adjacent crossings can be distinct.
+ return crossingsAlongPath(records,path,crossingMatchMeters).map(c=>{
   const reviewed = matchScore(c,state.crossingScores);
   const score = reviewed?.safetyScore ?? demoCrossingScore(c);
   return {...c,name:c.name||'Mapped crossing',score,color:scoreColor(score),demo:!reviewed,verifiedSource:reviewed?.source};
  });
 }
-function renderCrossings(crossings) {
+function renderCrossings(crossings, route = state.route) {
  clearMarkers(state.markers);
  for (const crossing of crossings) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = crossing.demo ? 'map-crossing map-crossing--demo' : 'map-crossing';
-  button.setAttribute('aria-label', `${crossingTitle(crossing, state.route)}. ${crossing.demo ? 'Demo' : 'Research'} score ${crossing.score}. Open crossing evidence`);
+  button.setAttribute('aria-label', `${crossingTitle(crossing, route)}. ${crossing.demo ? 'Demo' : 'Research'} score ${crossing.score}. Open crossing evidence`);
   const dot = document.createElement('span');
   dot.className = crossing.color;
   dot.textContent = crossing.score;
   button.append(dot);
   button.addEventListener('click',event=>{
    event.stopPropagation();
-   showCrossingEvidence(crossing,button);
+   showCrossingEvidence(crossing,button,route);
   });
   const marker = new maplibregl.Marker({element:button,anchor:'center'})
    .setLngLat([crossing.lon,crossing.lat]).addTo(state.map);
@@ -249,10 +319,10 @@ function showSelectedRoute() {
 async function selectRoute(route) {
  state.route=route;
  showSelectedRoute();
- renderLine(route.path);
+ renderLine(route);
  await loadRouteCrossings(route);
  if (state.route === route) {
-  renderCrossings(route.crossings ?? []);
+  if (state.detail !== 'comparison-sheet') renderCrossings(route.crossings ?? []);
   updateResult(route);
  }
 }
@@ -268,12 +338,12 @@ function crossingTitle(crossing, route) {
 }
 let crossingEvidenceTrigger;
 let evidenceCrossing;
-function showCrossingEvidence(crossing, trigger) {
+function showCrossingEvidence(crossing, trigger, route = state.route) {
  crossingEvidenceTrigger = trigger;
  evidenceCrossing = crossing;
  $('nav-simulate').removeAttribute('aria-disabled');
  $('nav-simulate').removeAttribute('title');
- $('evidence-title').textContent = crossingTitle(crossing, state.route);
+ $('evidence-title').textContent = crossingTitle(crossing, route);
  $('evidence-score-label').textContent = crossing.demo ? 'Demo crosswalk score' : 'Crosswalk score';
  $('evidence-score').textContent = crossing.score;
  const meter = $('evidence-meter');
@@ -346,12 +416,15 @@ function renderScoreInventory(route) {
  renderCrossingRows($('route-crossing-inventory'), crossings ?? [],
   crossing=>crossingTitle(crossing,route), showCrossingEvidence);
 }
+let comparisonPreview;
+const comparisonHitLayer = 'comparison-route-hit-target';
+
 function renderComparison() {
  $('comparison-demo-label').hidden = !state.routes.some(route=>routeScore(route.crossings).demo);
  const comparisonStatus = $('comparison-status');
  comparisonStatus.hidden = state.routes.length > 1;
  comparisonStatus.textContent = 'No alternate walking routes were returned for these addresses.';
- for (let index = 0; index < 3; index++) {
+ for (let index = 0; index < maxWalkingRoutes; index++) {
   const option = $('route-option-' + index);
   const route = state.routes[index];
   option.hidden = !route;
@@ -366,18 +439,41 @@ function renderComparison() {
   score.title = demo ? 'Demo score includes simulated values' : value === null ? 'No crossing score available' : `Verified scores for ${covered} of ${total} matched crossings`;
   score.setAttribute('aria-label', score.title);
   option.setAttribute('aria-pressed', String(selected));
+  option.toggleAttribute('data-previewed', route === comparisonPreview);
+  option.querySelector('.option-selected').textContent = selected ? 'Selected' : 'Preview';
   option.querySelector('strong').textContent = `${route.minutes} min · ${route.miles.toFixed(2)} mi`;
   option.querySelector('small').textContent = street ? `Via ${street}` : `Route ${index + 1}`;
   option.querySelector('.option-demo').hidden = !demo;
+  const coverage = route.walkingGeometry.mappedPercent;
+  option.querySelector('.option-footways').textContent = coverage === null
+   ? 'Mapped path coverage unavailable'
+   : `${coverage}% matches mapped paths`;
  }
+}
+function alternativePaths(route) {
+ return state.routes.filter(option=>option!==route).map(option=>option.path);
+}
+function previewComparison(route) {
+ if (state.detail !== 'comparison-sheet' || !route || route === comparisonPreview) return;
+ comparisonPreview = route;
+ drawRoutes(route, alternativePaths(route));
+ renderCrossings(route.crossings ?? [], route);
+ renderComparison();
 }
 async function showComparison() {
  const routes = state.routes;
  showRouteDetails('comparison-sheet');
- renderComparison();
- renderLine(state.route.path, routes.filter(route=>route!==state.route).map(route=>route.path));
- await Promise.all(routes.map(loadRouteCrossings));
- if (state.routes === routes && state.detail === 'comparison-sheet') renderComparison();
+ state.map.getSource(comparisonHitLayer)?.setData({
+  type:'FeatureCollection', features:routes.map((route,index)=>lineFeature(route.path,{index})),
+ });
+ previewComparison(state.route);
+ renderLine(state.route, {overview:true, alternatives:alternativePaths(state.route)});
+ await Promise.all(routes.map(async route=>{
+  await loadRouteCrossings(route);
+  if (state.routes !== routes || state.detail !== 'comparison-sheet') return;
+  if (route === comparisonPreview) renderCrossings(route.crossings ?? [], route);
+  renderComparison();
+ }));
 }
 async function chooseRoute(index) {
  const choice = state.routes[index];
@@ -412,6 +508,7 @@ function setView(view) {
  document.querySelector('.app').dataset.view = view;
  document.querySelector('.route-top').hidden = !navigating;
  document.querySelector('.results').hidden = !navigating;
+ $('locate').setAttribute('aria-label', navigating ? 'Recenter walking route' : 'Recenter on location');
  const map = $('nav-map');
  const routes = $('nav-routes');
  for (const [button, active, icon] of [[map,!navigating,'map'],[routes,navigating,'routes']]) {
@@ -422,6 +519,11 @@ function setView(view) {
  state.map?.resize();
 }
 function showRouteDetails(id) {
+ if (state.detail === 'comparison-sheet' && id !== 'comparison-sheet') {
+  comparisonPreview = undefined;
+  state.map.getSource(comparisonHitLayer)?.setData({type:'FeatureCollection',features:[]});
+  state.map.getCanvas().style.cursor = '';
+ }
  state.detail=id;
  document.querySelector('.app').dataset.routeDetail = id ?? '';
  const stepsVisible = id === 'steps-details';
@@ -459,6 +561,10 @@ function showPlanner() {
  showRouteDetails();
  status('');
  setView('planner');
+ if (state.route) {
+  renderCrossings(state.route.crossings ?? []);
+  renderLine(state.route, {overview:true});
+ }
 }
 function showNavigation() {
  if (!state.route) {
@@ -469,18 +575,42 @@ function showNavigation() {
  showRouteDetails();
  setView('route');
  showSelectedRoute();
- renderLine(state.route.path);
+ renderLine(state.route);
 }
 function initializeMap(){
  if(typeof maplibregl==='undefined'){$('map-loader').textContent='MapLibre could not load. Check your connection.';status('Map JavaScript failed to load.',true);return;}
  const map=new maplibregl.Map({container:'map',style:mapStyle,center:coords,zoom:14,attributionControl:false});state.map=map;
  map.on('load',()=>{
   state.loaded=true;$('map-loader')?.remove();
+  for (const layer of ['road_path_pedestrian','bridge_path_pedestrian','tunnel_path_pedestrian']) {
+   if (!map.getLayer(layer)) continue;
+   map.setPaintProperty(layer,'line-color','#627b72');
+   map.setPaintProperty(layer,'line-width',['interpolate',['linear'],['zoom'],14,0.8,18,2.2,20,4]);
+  }
   map.addSource('alternate-routes',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'alternate-route-lines',type:'line',source:'alternate-routes',paint:{'line-color':'#7898a7','line-width':4,'line-dasharray':[2,2]},layout:{'line-cap':'round','line-join':'round'}});
-  map.addSource('walking-route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:[]},properties:{}}});
-  map.addLayer({id:'route-outline',type:'line',source:'walking-route',paint:{'line-color':'#ffffff','line-width':10,'line-opacity':.95},layout:{'line-cap':'round','line-join':'round'}});
-  map.addLayer({id:'walking-route',type:'line',source:'walking-route',paint:{'line-color':'#0c7890','line-width':6},layout:{'line-cap':'round','line-join':'round'}});
+  map.addSource('walking-route',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  const matched = ['==',['get','mapped'],true];
+  const unmatched = ['==',['get','mapped'],false];
+  const lineLayout = {'line-cap':'round','line-join':'round'};
+  map.addLayer({id:'route-outline',type:'line',source:'walking-route',
+   paint:{'line-color':'#fff','line-width':7},layout:lineLayout});
+  map.addLayer({id:'walking-route',type:'line',source:'walking-route',filter:matched,
+   paint:{'line-color':'#0c7890','line-width':4},layout:lineLayout});
+  map.addLayer({id:'walking-route-approximate',type:'line',source:'walking-route',filter:unmatched,
+   paint:{'line-color':'#b83f39','line-width':4,'line-dasharray':[1.2,1.1]},layout:lineLayout});
+  map.addSource(comparisonHitLayer,{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:comparisonHitLayer,type:'line',source:comparisonHitLayer,
+   paint:{'line-color':'#000','line-opacity':0,'line-width':18},
+   layout:{'line-cap':'round','line-join':'round'}});
+  map.on('mousemove',comparisonHitLayer,event=>{
+   if (state.detail !== 'comparison-sheet' || !event.features?.length) return;
+   map.getCanvas().style.cursor = 'pointer';
+   const routes = event.features.map(feature=>state.routes[feature.properties.index]);
+   // Shared segments keep the current preview until the pointer reaches a distinct route.
+   if (!routes.includes(comparisonPreview)) previewComparison(routes[0]);
+  });
+  map.on('mouseleave',comparisonHitLayer,()=>{map.getCanvas().style.cursor = '';});
  });
  map.on('error',e=>{if(!state.loaded) $('map-loader').textContent='Map tiles unavailable. Check network or map provider.';console.error('MapLibre:',e.error?.message||e);});
  $('zoom-in').addEventListener('click',()=>map.zoomIn());$('zoom-out').addEventListener('click',()=>map.zoomOut());
@@ -489,7 +619,21 @@ $('evidence-back').addEventListener('click',()=>closeCrossingEvidence(true));
 $('simulate-crossing').addEventListener('click',showScenarioExplorer);
 $('nav-simulate').addEventListener('click',showScenarioExplorer);
 $('gps').addEventListener('click',locate);
-$('locate').addEventListener('click',()=>{if(!state.gps)locate();else state.map?.flyTo({center:state.gps,zoom:16});});
+$('locate').addEventListener('click',()=>{
+ if (state.route && document.querySelector('.app').dataset.view === 'route') {
+  if (state.detail === 'comparison-sheet') {
+   const route = comparisonPreview ?? state.route;
+   renderLine(route, {overview:true,alternatives:alternativePaths(route)});
+  } else {
+   if (state.detail) closeRouteDetails();
+   focusWalkingStart(state.route.path);
+  }
+ } else if (state.gps) {
+  state.map?.flyTo({center:state.gps,zoom:16});
+ } else {
+  locate();
+ }
+});
 $('find').addEventListener('click',calculate);
 $('swap').addEventListener('click',()=>{
  const from = $('from');
@@ -507,14 +651,19 @@ function closeRouteDetails() {
  const detail = state.detail;
  showRouteDetails();
  showSelectedRoute();
- if (detail === 'comparison-sheet') renderLine(state.route.path);
+ if (detail === 'comparison-sheet') renderLine(state.route);
  const trigger = {'steps-details':'show-steps', 'comparison-sheet':'compare-routes', 'score-sheet':'route-score'}[detail];
  $(trigger).focus({preventScroll:true});
 }
 $('route-score').addEventListener('click',()=>showRouteDetails('score-sheet'));
 $('compare-routes').addEventListener('click',showComparison);
-for (let index = 0; index < 3; index++) {
- $('route-option-' + index).addEventListener('click',()=>chooseRoute(index));
+for (let index = 0; index < maxWalkingRoutes; index++) {
+ const option = $('route-option-' + index);
+ option.addEventListener('pointerenter',event=>{
+  if (event.pointerType !== 'touch') previewComparison(state.routes[index]);
+ });
+ option.addEventListener('focus',()=>previewComparison(state.routes[index]));
+ option.addEventListener('click',()=>chooseRoute(index));
 }
 for (const id of ['info','nav-sources']) $(id).addEventListener('click',()=>$('sources-dialog').showModal());
 restoreDirections();

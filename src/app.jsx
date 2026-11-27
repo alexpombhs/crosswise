@@ -48,7 +48,11 @@ function App() {
             <div className="zoom-controls"><CrosswiseIconButton id="locate" aria-label="Recenter on location">⌖</CrosswiseIconButton><CrosswiseIconButton id="zoom-in" aria-label="Zoom in">+</CrosswiseIconButton><CrosswiseIconButton id="zoom-out" aria-label="Zoom out">−</CrosswiseIconButton></div>
             <section className="route-top" aria-label="Walking navigation" hidden>
               <CrosswiseAction type="button" className="destination" id="back" aria-label="Back to route planner"><img src={figmaIcon("back")} alt="" /><span><strong id="route-destination"></strong><small id="route-estimate"></small></span></CrosswiseAction>
-              <CrosswiseAction type="button" className="maneuver" id="next-step"><img src={figmaIcon("straight")} alt="" /><span><strong id="maneuver-text"></strong><small>Walking directions</small></span></CrosswiseAction>
+              <CrosswiseAction type="button" className="maneuver" id="next-step"><img src={figmaIcon("straight")} alt="" /><span><strong id="maneuver-text"></strong><small>View walking directions</small></span></CrosswiseAction>
+              <div className="walking-line-legend" aria-label="Map legend">
+                <span><i aria-hidden="true"></i>Mapped path match</span>
+                <span><i aria-hidden="true"></i>Sidewalk unconfirmed</span>
+              </div>
             </section>
             <span id="map-demo-label" className="demo-map-label" hidden>Demo crossing scores</span>
             <section className="results panel" aria-label="Route details" hidden>
@@ -77,7 +81,7 @@ function App() {
                   {[0, 1, 2].map(index => (
                     <CrosswiseAction key={index} type="button" id={`route-option-${index}`} className="route-option" aria-pressed="false" hidden>
                       <span className="option-score"></span>
-                      <span className="option-text"><strong></strong><small></small><small className="option-demo" hidden>Demo score</small></span>
+                      <span className="option-text"><strong></strong><small></small><small className="option-footways"></small><small className="option-demo" hidden>Demo score</small></span>
                       <span className="option-selected">Selected</span>
                     </CrosswiseAction>
                   ))}
@@ -134,6 +138,7 @@ function App() {
       <dialog id="sources-dialog">
         <h2>Crosswise research sources</h2>
         <p>Basemap by <a href="https://openfreemap.org/">OpenFreeMap</a> and <a href="https://openmaptiles.org/">OpenMapTiles</a>, using <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>.</p>
+        <p>The suggested route favors mapped sidewalks and footpaths. Comparisons can include routes from the standard pedestrian profile. Teal sections match separately mapped paths in OpenStreetMap. Red dashes flag stretches where the sidewalk position is unconfirmed.</p>
         <p>Walking directions use Valhalla. Crossings come from OpenStreetMap and Bedford addresses come from MassGIS.</p>
         <p>Demo scores are simulated values for trying the interface. Reviewed scores are exploratory research estimates. A geometric match does not confirm that your route traverses a crossing.</p>
         <form method="dialog"><CrosswiseButton className="primary" type="submit">Close</CrosswiseButton></form>

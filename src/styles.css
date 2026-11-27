@@ -437,21 +437,35 @@ dialog::backdrop { background: #15334866; }
 
 [data-route-detail="comparison-sheet"] .results > :not(.comparison-sheet),
 [data-route-detail="comparison-sheet"] .maneuver { display: none; }
-.comparison-sheet { max-height: min(56dvh, 420px); padding: 7px 14px 14px; }
+.comparison-sheet {
+  display: flex;
+  flex-direction: column;
+  max-height: min(56dvh, 420px);
+  padding: 7px 14px 14px;
+  overflow: hidden;
+}
+.comparison-sheet .comparison-confirm { flex: none; min-height: 40px; margin-top: 8px; }
 .comparison-sheet h2 {
   margin: 0;
   color: #147e88;
   font-size: 11px;
   text-transform: uppercase;
 }
-.comparison-options { display: grid; gap: 10px; }
+.comparison-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
 .comparison-options .route-option {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: 2px 12px;
-  min-height: 82px;
-  padding: 10px 12px;
+  flex: none;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 70px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 14px;
   color: var(--ink);
@@ -462,23 +476,25 @@ dialog::backdrop { background: #15334866; }
   background: #f1f6f8;
 }
 .option-score {
-  grid-row: 1 / 3;
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   color: white;
   font-weight: 700;
 }
-.option-text strong, .option-text small { display: block; }
-.option-text strong { font-size: 16px; }
-.option-text small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.option-text { min-width: 0; }
+.option-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 6px; }
+.option-heading strong { font-size: 15px; }
+.option-text small { color: var(--muted); font-size: 11px; }
+.option-street { display: block; margin-top: 2px; }
+.option-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 3px; }
+.option-text .option-crossings { color: var(--ink); font-weight: 600; }
 .option-selected {
   display: none;
-  justify-self: end;
   color: var(--blue);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -505,8 +521,6 @@ dialog::backdrop { background: #15334866; }
 [data-view="planner"] .demo-map-label,
 [data-route-detail="steps-details"] .demo-map-label,
 [data-route-detail="comparison-sheet"] .demo-map-label { display: none; }
-.comparison-demo-label { margin: 0 0 9px; color: var(--muted); font-size: 11px; }
-.option-text .option-demo { color: var(--blue); font-weight: 700; }
 
 .map-crossing--demo > span { width: 23px; height: 23px; font-size: 10px; }
 
@@ -656,6 +670,8 @@ dialog::backdrop { background: #15334866; }
 }
 .walking-line-legend span { display: flex; align-items: center; gap: 4px; }
 .walking-line-legend i { width: 13px; border-top: 3px solid #0c7890; }
-.walking-line-legend span + span i { border-top: 3px dashed #b83f39; }
+.walking-line-legend .legend-unconfirmed i { border-top: 3px dashed #b83f39; }
+.walking-line-legend .legend-use-sidewalk i { border-top: 3px dotted #976716; }
+.step-sidewalk-note { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
 [data-route-detail="steps-details"] .walking-line-legend,
 [data-route-detail="score-sheet"] .walking-line-legend { display: none; }

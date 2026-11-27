@@ -656,6 +656,6 @@ dialog::backdrop { background: #15334866; }
 }
 .walking-line-legend span { display: flex; align-items: center; gap: 4px; }
 .walking-line-legend i { width: 13px; border-top: 3px solid #0c7890; }
-.walking-line-legend span + span i { border-top: 3px dotted #52667a; }
+.walking-line-legend span + span i { border-top-color: #52667a; }
 [data-route-detail="steps-details"] .walking-line-legend,
 [data-route-detail="score-sheet"] .walking-line-legend { display: none; }

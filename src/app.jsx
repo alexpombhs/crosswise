@@ -138,7 +138,7 @@ function App() {
       <dialog id="sources-dialog">
         <h2>Crosswise research sources</h2>
         <p>Basemap by <a href="https://openfreemap.org/">OpenFreeMap</a> and <a href="https://openmaptiles.org/">OpenMapTiles</a>, using <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>.</p>
-        <p>Walking routes favor mapped sidewalks and footpaths. Solid lines match separately mapped pedestrian paths in the Bedford-area OpenStreetMap snapshot. Dotted sections show approximate routing geometry where the sidewalk position is unknown. Check signs and conditions on the ground.</p>
+        <p>The suggested route favors mapped sidewalks and footpaths. Comparisons can include routes from the standard pedestrian profile. Teal sections match separately mapped paths in OpenStreetMap. Slate sections show approximate routing geometry where the sidewalk position is unknown.</p>
         <p>Walking directions use Valhalla. Crossings come from OpenStreetMap and Bedford addresses come from MassGIS.</p>
         <p>Demo scores are simulated values for trying the interface. Reviewed scores are exploratory research estimates. A geometric match does not confirm that your route traverses a crossing.</p>
         <form method="dialog"><CrosswiseButton className="primary" type="submit">Close</CrosswiseButton></form>

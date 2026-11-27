@@ -135,16 +135,13 @@ async function requestWalkingRoute(origin,destination) {
   costing_options:{pedestrian:{walkway_factor:0.55,sidewalk_factor:0.75}},
  });
  let options = preferred;
- // Vary the footway preference to find alternatives while keeping both profiles pedestrian-focused.
+ // The standard pedestrian profile can return distinct routes omitted by sidewalk weighting.
  if (preferred.length < maxWalkingRoutes) {
   const fallback = new AbortController();
   const timeout = setTimeout(()=>fallback.abort(),4500);
   try {
-   const secondary = await requestRouteOptions({
-    ...basePayload,
-    costing_options:{pedestrian:{walkway_factor:0.75,sidewalk_factor:0.85}},
-   },fallback.signal);
-   options = distinctRoutes([...preferred,...secondary]);
+   const standard = await requestRouteOptions(basePayload,fallback.signal);
+   options = distinctRoutes([...preferred,...standard]);
   } catch {
    // Keep the preferred walking options when the additional request fails.
   } finally {
@@ -601,12 +598,12 @@ function initializeMap(){
   const matched = ['==',['get','mapped'],true];
   const unmatched = ['==',['get','mapped'],false];
   const lineLayout = {'line-cap':'round','line-join':'round'};
-  map.addLayer({id:'route-outline',type:'line',source:'walking-route',filter:matched,
+  map.addLayer({id:'route-outline',type:'line',source:'walking-route',
    paint:{'line-color':'#fff','line-width':7},layout:lineLayout});
   map.addLayer({id:'walking-route',type:'line',source:'walking-route',filter:matched,
    paint:{'line-color':'#0c7890','line-width':4},layout:lineLayout});
   map.addLayer({id:'walking-route-approximate',type:'line',source:'walking-route',filter:unmatched,
-   paint:{'line-color':'#52667a','line-width':3,'line-dasharray':[0.45,1.7]},layout:lineLayout});
+   paint:{'line-color':'#52667a','line-width':4},layout:lineLayout});
   map.addSource(comparisonHitLayer,{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:comparisonHitLayer,type:'line',source:comparisonHitLayer,
    paint:{'line-color':'#000','line-opacity':0,'line-width':18},

@@ -1,5 +1,31 @@
 export const radians=x=>x*Math.PI/180;
 export function distance(a,b){const lat1=radians(a[1]),lat2=radians(b[1]),dLat=lat2-lat1,dLon=radians(b[0]-a[0]);const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 12742000*Math.asin(Math.min(1,Math.sqrt(h)));}
+export function initialRouteBearing(path, lookAheadMeters = 20) {
+  const [start] = path;
+  if (!start) return 0;
+  let remaining = lookAheadMeters;
+  let target = start;
+  for (let index = 1; index < path.length; index++) {
+    const from = path[index - 1];
+    const to = path[index];
+    const meters = distance(from, to);
+    if (!meters) continue;
+    if (meters >= remaining) {
+      const fraction = remaining / meters;
+      target = from.map((coordinate, axis) => coordinate + fraction * (to[axis] - coordinate));
+      break;
+    }
+    remaining -= meters;
+    target = to;
+  }
+  const latitude = radians(start[1]);
+  const targetLatitude = radians(target[1]);
+  const longitudeDelta = radians(target[0] - start[0]);
+  const east = Math.sin(longitudeDelta) * Math.cos(targetLatitude);
+  const north = Math.cos(latitude) * Math.sin(targetLatitude)
+    - Math.sin(latitude) * Math.cos(targetLatitude) * Math.cos(longitudeDelta);
+  return Math.atan2(east, north) * 180 / Math.PI;
+}
 export function projectToRoute(point, path) {
   const latitude = radians(point[1]);
   const xy = ([lon, lat]) => [

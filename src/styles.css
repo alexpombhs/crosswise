@@ -147,7 +147,8 @@ button:disabled { cursor: default; opacity: .6; }
 #map-loader { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 12px; border-radius: 10px; background: white; font-size: 12px; text-align: center; }
 .zoom-controls { position: absolute; right: 8px; top: 8px; display: grid; gap: 4px; }
 .zoom-controls .icon-button { --icon-button-width: 32px; --icon-button-height: 32px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); }
-[data-view="route"] .zoom-controls { top: 188px; }
+[data-view="route"] .zoom-controls { top: 228px; }
+[data-route-detail="comparison-sheet"] .zoom-controls { top: 132px; }
 [data-view="route"] .planner { display: none; }
 [data-view="route"] .map-area { min-height: max(500px, calc(100dvh - 152px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); }
 #status { margin: 0; padding: 0 18px 10px; color: var(--muted); font-size: 12px; }
@@ -456,7 +457,7 @@ dialog::backdrop { background: #15334866; }
   color: var(--ink);
   text-align: left;
 }
-.comparison-options .route-option[aria-pressed="true"] {
+.comparison-options .route-option[data-previewed] {
   border-color: transparent;
   background: #f1f6f8;
 }
@@ -481,7 +482,8 @@ dialog::backdrop { background: #15334866; }
   font-weight: 700;
   text-transform: uppercase;
 }
-.route-option[aria-pressed="true"] .option-selected { display: block; }
+.route-option[aria-pressed="true"] .option-selected,
+.route-option[data-previewed] .option-selected { display: block; }
 #comparison-status { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .score-text-red { color: #c94c45; }
 .score-text-orange { color: #c47d16; }
@@ -489,7 +491,7 @@ dialog::backdrop { background: #15334866; }
 
 .demo-map-label {
   position: absolute;
-  top: 176px;
+  top: 225px;
   left: 16px;
   max-width: calc(100% - 80px);
   padding: 5px 9px;
@@ -638,3 +640,22 @@ dialog::backdrop { background: #15334866; }
 .scenario-option strong { font-size: 12px; }
 .scenario-option small { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .scenario-note { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+
+.walking-line-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 12px;
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: white;
+  color: var(--muted);
+  font-size: 10px;
+}
+.walking-line-legend span { display: flex; align-items: center; gap: 4px; }
+.walking-line-legend i { width: 13px; border-top: 3px solid #0c7890; }
+.walking-line-legend span + span i { border-top: 3px dotted #52667a; }
+[data-route-detail="steps-details"] .walking-line-legend,
+[data-route-detail="score-sheet"] .walking-line-legend { display: none; }

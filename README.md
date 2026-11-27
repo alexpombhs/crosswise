@@ -35,6 +35,8 @@ The installed app opens in its own window. Live maps and directions require an i
 
 ## Data and scientific limitations
 
+The solid route line matches separately mapped pedestrian paths from the bundled Bedford-area [OpenStreetMap](https://www.openstreetmap.org/copyright) snapshot. Dotted stretches indicate that the sidewalk position is unknown. These matches describe map geometry, and street conditions can differ. The bundled path geometry is available under the ODbL.
+
 The file [`data/crossings.json`](data/crossings.json) starts empty **on purpose**. No crossing-level safety scores have been verified yet. The app generates separate, repeatable demo scores for publicly mapped crossings without reviewed scores. Once scoring is supported by methodology and site observations, add reviewed records, for example:
 
 ```json

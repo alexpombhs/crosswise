@@ -48,10 +48,11 @@ function App() {
             <div className="zoom-controls"><CrosswiseIconButton id="locate" aria-label="Recenter on location">⌖</CrosswiseIconButton><CrosswiseIconButton id="zoom-in" aria-label="Zoom in">+</CrosswiseIconButton><CrosswiseIconButton id="zoom-out" aria-label="Zoom out">−</CrosswiseIconButton></div>
             <section className="route-top" aria-label="Walking navigation" hidden>
               <CrosswiseAction type="button" className="destination" id="back" aria-label="Back to route planner"><img src={figmaIcon("back")} alt="" /><span><strong id="route-destination"></strong><small id="route-estimate"></small></span></CrosswiseAction>
-              <CrosswiseAction type="button" className="maneuver" id="next-step"><img src={figmaIcon("straight")} alt="" /><span><strong id="maneuver-text"></strong><small>View walking directions</small></span></CrosswiseAction>
+              <CrosswiseAction type="button" className="maneuver" id="next-step"><img src={figmaIcon("straight")} alt="" /><span><strong id="maneuver-text"></strong><small id="maneuver-note">View walking directions</small></span></CrosswiseAction>
               <div className="walking-line-legend" aria-label="Map legend">
-                <span><i aria-hidden="true"></i>Mapped path match</span>
-                <span><i aria-hidden="true"></i>Sidewalk unconfirmed</span>
+                <span><i aria-hidden="true"></i>Mapped sidewalk or path</span>
+                <span className="legend-unconfirmed"><i aria-hidden="true"></i>Sidewalk unconfirmed</span>
+                <span id="map-sidewalk-guidance" className="legend-use-sidewalk" hidden><i aria-hidden="true"></i>Use sidewalk · side unconfirmed</span>
               </div>
             </section>
             <span id="map-demo-label" className="demo-map-label" hidden>Demo crossing scores</span>
@@ -75,17 +76,20 @@ function App() {
                 <div className="steps-title">
                   <h2 id="comparison-heading" tabIndex={-1}>Walking routes</h2>
                 </div>
-                <p id="comparison-demo-label" className="comparison-demo-label" hidden>Demo scores use simulated values and do not measure crossing safety.</p>
                 <p id="comparison-status" role="status" hidden></p>
                 <div className="comparison-options">
                   {[0, 1, 2].map(index => (
                     <CrosswiseAction key={index} type="button" id={`route-option-${index}`} className="route-option" aria-pressed="false" hidden>
                       <span className="option-score"></span>
-                      <span className="option-text"><strong></strong><small></small><small className="option-footways"></small><small className="option-demo" hidden>Demo score</small></span>
-                      <span className="option-selected">Selected</span>
+                      <span className="option-text">
+                        <span className="option-heading"><strong></strong><span className="option-selected">Selected</span></span>
+                        <small className="option-street"></small>
+                        <span className="option-meta"><small className="option-crossings"></small></span>
+                      </span>
                     </CrosswiseAction>
                   ))}
                 </div>
+                <CrosswiseButton type="button" id="use-previewed-route" className="primary comparison-confirm" hidden>Use this route</CrosswiseButton>
               </section>
               <section className="route-sheet steps-sheet" id="steps-details" aria-labelledby="steps-heading" hidden>
                 <div className="steps-header">
@@ -94,6 +98,7 @@ function App() {
                     <h2 id="steps-heading" tabIndex={-1}>Walking directions</h2>
                   </div>
                 </div>
+                <p className="step-sidewalk-note" id="step-sidewalk-note" hidden>Use the sidewalk on marked stretches. The route line shows the street alignment, and the exact side is unconfirmed.</p>
                 <ol id="directions" role="list"></ol>
               </section>
             </section>
@@ -138,7 +143,7 @@ function App() {
       <dialog id="sources-dialog">
         <h2>Crosswise research sources</h2>
         <p>Basemap by <a href="https://openfreemap.org/">OpenFreeMap</a> and <a href="https://openmaptiles.org/">OpenMapTiles</a>, using <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>.</p>
-        <p>The suggested route favors mapped sidewalks and footpaths. Comparisons can include routes from the standard pedestrian profile. Teal sections match separately mapped paths in OpenStreetMap. Red dashes flag stretches where the sidewalk position is unconfirmed.</p>
+        <p>Crosswise checks for mapped sidewalks beside the streets on a route and tries to use those sidewalks. Where a pedestrian route uses the street centerline beside a mapped sidewalk, the map can show sidewalk guidance with the exact side unconfirmed. Where the map cannot confirm a sidewalk, a pedestrian-accessible street may be part of the route.</p>
         <p>Walking directions use Valhalla. Crossings come from OpenStreetMap and Bedford addresses come from MassGIS.</p>
         <p>Demo scores are simulated values for trying the interface. Reviewed scores are exploratory research estimates. A geometric match does not confirm that your route traverses a crossing.</p>
         <form method="dialog"><CrosswiseButton className="primary" type="submit">Close</CrosswiseButton></form>

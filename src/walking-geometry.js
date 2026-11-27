@@ -41,13 +41,18 @@ function clipRange(start, delta, min, max, interval) {
   return interval[0] < interval[1];
 }
 
-function coveredIntervals(cells, ax, ay, bx, by, length) {
+function nearbyFootways(cells, ax, ay, bx, by, radius = 0) {
   const candidates = new Set();
-  for (let x = cell(Math.min(ax, bx)); x <= cell(Math.max(ax, bx)); x++) {
-    for (let y = cell(Math.min(ay, by)); y <= cell(Math.max(ay, by)); y++) {
+  for (let x = cell(Math.min(ax, bx) - radius); x <= cell(Math.max(ax, bx) + radius); x++) {
+    for (let y = cell(Math.min(ay, by) - radius); y <= cell(Math.max(ay, by) + radius); y++) {
       for (const segment of cells.get(key(x, y)) ?? []) candidates.add(segment);
     }
   }
+  return candidates;
+}
+
+function coveredIntervals(cells, ax, ay, bx, by, length) {
+  const candidates = nearbyFootways(cells, ax, ay, bx, by);
   const dx = bx - ax;
   const dy = by - ay;
   const intervals = [];
@@ -105,7 +110,137 @@ export function classifyWalkingPath(path, footways, bounds) {
   }
   const insideCoverage = !bounds || path.every(([lon, lat]) =>
     lon >= bounds[0] && lat >= bounds[1] && lon <= bounds[2] && lat <= bounds[3]);
-  return { sections, mappedPercent: insideCoverage && total ? Math.round(100 * matched / total) : null };
+  return {
+    sections,
+    mappedPercent: insideCoverage && total ? Math.round(100 * matched / total) : null,
+    unmatchedMeters: insideCoverage ? total - matched : null,
+  };
+}
+
+export function findParallelSidewalks(geometry, sidewalks) {
+  if (!sidewalks) return [];
+  const nearbyMeters = 18;
+  const stretches = [];
+  let position = 0;
+  for (const section of geometry.sections) {
+    const matches = [];
+    for (let index = 1; index < section.path.length; index++) {
+      const [ax, ay] = meters(section.path[index - 1]);
+      const [bx, by] = meters(section.path[index]);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const length = Math.hypot(dx, dy);
+      const offsetAlongRoute = position;
+      position += length;
+      if (section.mapped || !length) continue;
+      for (const segment of nearbyFootways(sidewalks, ax, ay, bx, by, nearbyMeters)) {
+        const segmentLength = Math.sqrt(segment.lengthSquared);
+        const ux = segment.dx / segmentLength;
+        const uy = segment.dy / segmentLength;
+        const along = dx * ux + dy * uy;
+        if (Math.abs(along) < minimumAlignment * length) continue;
+        const x = ax - segment.ax;
+        const y = ay - segment.ay;
+        const offset = x * ux + y * uy;
+        const lateral = x * uy - y * ux;
+        const lateralDelta = dx * uy - dy * ux;
+        for (const sign of [-1, 1]) {
+          const interval = [0, 1];
+          if (!clipRange(offset, along, 0, segmentLength, interval)
+            || !clipRange(sign * lateral, sign * lateralDelta, matchMeters, nearbyMeters, interval)) continue;
+          const [start, end] = interval;
+          const projected = offset + along * (start + end) / 2;
+          const lon = (segment.ax + ux * projected) / metersPerLongitudeDegree - 71.27;
+          const lat = (segment.ay + uy * projected) / metersPerLatitudeDegree + 42.49;
+          matches.push({
+            start: offsetAlongRoute + start * length,
+            end: offsetAlongRoute + end * length,
+            point: [lon, lat],
+            side: sign * Math.sign(along) > 0 ? 'left' : 'right',
+            overlap: (end - start) * length,
+          });
+        }
+      }
+    }
+    matches.sort((a, b) => a.start - b.start);
+    let current;
+    for (const match of matches) {
+      if (!current || match.start > current.end + 4) {
+        current = { start: match.start, end: match.end, length: 0, coveredTo: match.start };
+        stretches.push(current);
+      }
+      current.length += Math.max(0, match.end - Math.max(match.start, current.coveredTo));
+      current.coveredTo = Math.max(current.coveredTo, match.end);
+      current.end = Math.max(current.end, match.end);
+      if (match.overlap > (current[match.side]?.overlap ?? 0)) current[match.side] = match;
+    }
+  }
+  // Ignore isolated short alignments at crossings and sidewalk connections.
+  return stretches.filter(stretch => stretch.length >= 12);
+}
+
+export function sidewalkWaypointOptions(stretches) {
+  const prioritized = [...stretches].sort((a, b) => b.length - a.length)
+    .slice(0, 6).sort((a, b) => a.start - b.start);
+  const left = prioritized.map(stretch => (stretch.left ?? stretch.right).point);
+  const right = prioritized.map(stretch => (stretch.right ?? stretch.left).point);
+  return JSON.stringify(left) === JSON.stringify(right) ? [left] : [left, right];
+}
+
+export function rankWalkingRoutes(routes) {
+  return [...routes].sort((a, b) =>
+    (b.walkingGeometry.mappedPercent ?? -1) - (a.walkingGeometry.mappedPercent ?? -1));
+}
+
+export function chooseWalkingRoutes(routes, limit) {
+  const ranked = rankWalkingRoutes(routes);
+  const withoutConflicts = ranked.filter(route => !route.sidewalkConflicts.length);
+  if (withoutConflicts.length) return withoutConflicts.slice(0, limit);
+  const conflictLength = route => route.sidewalkConflicts.reduce((sum, stretch) => sum + stretch.length, 0);
+  const fallback = ranked.reduce((best, route) =>
+    !best || conflictLength(route) < conflictLength(best) ? route : best, null);
+  return fallback ? [fallback] : [];
+}
+
+export function walkingDisplaySections(geometry, conflicts) {
+  if (!conflicts.length) return geometry.sections;
+  const sections = [];
+  let position = 0;
+  let conflictIndex = 0;
+  function append(from, to, mapped, useSidewalk) {
+    const last = sections.at(-1);
+    if (last?.mapped === mapped && last.useSidewalk === useSidewalk) last.path.push(to);
+    else sections.push({ path: [from, to], mapped, useSidewalk });
+  }
+  for (const section of geometry.sections) {
+    for (let i = 1; i < section.path.length; i++) {
+      const from = section.path[i - 1];
+      const to = section.path[i];
+      const [ax, ay] = meters(from);
+      const [bx, by] = meters(to);
+      const length = Math.hypot(bx - ax, by - ay);
+      if (!length) continue;
+      const end = position + length;
+      if (section.mapped) append(from, to, true, false);
+      else {
+        let start = position;
+        while (conflictIndex < conflicts.length && conflicts[conflictIndex].start < end) {
+          const conflict = conflicts[conflictIndex];
+          const guideStart = Math.max(start, conflict.start);
+          const guideEnd = Math.min(end, conflict.end);
+          const point = offset => interpolate(from, to, (offset - position) / length);
+          if (guideStart > start) append(point(start), point(guideStart), false, false);
+          if (guideEnd > guideStart) append(point(guideStart), point(guideEnd), false, true);
+          start = Math.max(start, guideEnd);
+          if (conflict.end > end) break;
+          conflictIndex++;
+        }
+        if (start < end) append(interpolate(from, to, (start - position) / length), to, false, false);
+      }
+      position = end;
+    }
+  }
+  return sections;
 }
 
 let footwayIndex;
@@ -115,7 +250,11 @@ export function loadFootways() {
       if (!response.ok) throw new Error('Footway data unavailable');
       return response.json();
     })
-    .then(data => ({ cells: indexFootways(data.paths), bounds: data.bounds }))
+    .then(data => ({
+      cells: indexFootways(data.paths),
+      sidewalks: indexFootways(data.sidewalks.map(index => data.paths[index])),
+      bounds: data.bounds,
+    }))
     .catch(() => {
       footwayIndex = undefined;
       return null;

@@ -1,9 +1,9 @@
-import { classifyWalkingPath, loadFootways } from './walking-geometry.js';
+import { chooseWalkingRoutes, classifyWalkingPath, findParallelSidewalks, loadFootways, rankWalkingRoutes, sidewalkWaypointOptions, walkingDisplaySections } from './walking-geometry.js';
 import { renderScenarioExplorer } from './scenario-explorer.jsx';
 import { renderCrossingRows } from './crossing-inventory.jsx';
 import { figmaIcon } from './assets.js';
 import { attachAddressLookup, resolveAddress } from './address-lookup.js';
-import { distance, initialRouteBearing, crossingsAlongPath, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
+import { distance, initialRouteBearing, crossingsAlongPath, nearRoute, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
 
 const $ = id => document.getElementById(id);
 const state = { map:null, gps:null, gpsWatch:null, markers:[], endpoints:[], route:null, routes:[], routeNames:[], detail:null, crossingScores:[], loaded:false };
@@ -85,7 +85,8 @@ function drawRoutes(route, alternatives) {
  });
  state.map.getSource('walking-route')?.setData({
   type:'FeatureCollection',
-  features:route.walkingGeometry.sections.map(({ path, mapped })=>lineFeature(path,{mapped})),
+  features:walkingDisplaySections(route.walkingGeometry,route.sidewalkConflicts)
+   .map(({path,mapped,useSidewalk=false})=>lineFeature(path,{mapped,useSidewalk})),
  });
 }
 function renderLine(route, { alternatives = [], overview = false } = {}){
@@ -129,27 +130,48 @@ async function requestWalkingRoute(origin,destination) {
   directions_type:'instructions',
   shape_format:'polyline6',
  };
- const footways = loadFootways();
- const preferred = await requestRouteOptions({
+ const preferredPayload = {
   ...basePayload,
-  costing_options:{pedestrian:{walkway_factor:0.55,sidewalk_factor:0.75}},
+  costing_options:{pedestrian:{walkway_factor:0.2,sidewalk_factor:0.55}},
+ };
+ const [preferred, index] = await Promise.all([
+  requestRouteOptions(preferredPayload),
+  loadFootways(),
+ ]);
+ const classify = routes=>routes.map(route=>{
+  const walkingGeometry=classifyWalkingPath(route.path,index?.cells,index?.bounds);
+  const sidewalkConflicts=findParallelSidewalks(walkingGeometry,index?.sidewalks);
+  return {...route,walkingGeometry,sidewalkConflicts};
  });
- let options = preferred;
- // The standard pedestrian profile can return distinct routes omitted by sidewalk weighting.
- if (preferred.length < maxWalkingRoutes) {
-  const fallback = new AbortController();
-  const timeout = setTimeout(()=>fallback.abort(),4500);
-  try {
-   const standard = await requestRouteOptions(basePayload,fallback.signal);
-   options = distinctRoutes([...preferred,...standard]);
-  } catch {
-   // Keep the preferred walking options when the additional request fails.
-  } finally {
-   clearTimeout(timeout);
+ const ranked = rankWalkingRoutes(classify(preferred));
+ const ready = ranked.filter(route=>!route.sidewalkConflicts.length);
+ if (ready.length === maxWalkingRoutes) return ready;
+ const blocked = ranked.find(route=>route.sidewalkConflicts.length);
+ const retryWaypoints = blocked ? sidewalkWaypointOptions(blocked.sidewalkConflicts) : [];
+
+ const timeout = new AbortController();
+ const timer = setTimeout(()=>timeout.abort(),4500);
+ try {
+  const supplemental = [
+   requestRouteOptions({
+    ...basePayload,
+    costing_options:{pedestrian:{walkway_factor:0.55,sidewalk_factor:0.75}},
+   },timeout.signal).then(classify),
+   requestRouteOptions(basePayload,timeout.signal).then(classify),
+  ];
+  for (const waypoints of retryWaypoints) {
+   const locations = waypoints.map(([lon,lat])=>({lon,lat,type:'through',radius:2,search_cutoff:3,node_snap_tolerance:0}));
+   supplemental.push(requestRouteOptions({
+    ...preferredPayload,alternates:0,
+    locations:[basePayload.locations[0],...locations,basePayload.locations[1]],
+   },timeout.signal).then(classify).then(routes=>routes.filter(route=>waypoints.every(point=>nearRoute(point,route.path)<=2))));
   }
+  const results = await Promise.allSettled(supplemental);
+  const extra = results.flatMap(result=>result.status === 'fulfilled' ? result.value : []);
+  return chooseWalkingRoutes(distinctRoutes([...ranked,...extra]),maxWalkingRoutes);
+ } finally {
+  clearTimeout(timer);
  }
- const index = await footways;
- return options.map(route=>({...route,walkingGeometry:classifyWalkingPath(route.path,index?.cells,index?.bounds)}));
 }
 async function requestRouteOptions(payload, signal) {
  const response = await fetch(routeEndpoint,{
@@ -173,7 +195,6 @@ function distinctRoutes(routes) {
   if (seen.has(key)) continue;
   seen.add(key);
   distinct.push(route);
-  if (distinct.length === maxWalkingRoutes) break;
  }
  return distinct;
 }
@@ -312,6 +333,11 @@ function showSelectedRoute() {
  $('route-destination').textContent=state.routeNames[1];
  $('route-estimate').textContent=`Walking · ${route.minutes} min · ${route.miles.toFixed(2)} mi`;
  $('maneuver-text').textContent=route.maneuvers.find(step=>step.instruction)?.instruction || 'Follow the walking route';
+ $('maneuver-note').textContent=route.sidewalkConflicts.length
+  ? 'Use the sidewalk on marked stretches.'
+  : 'View walking directions';
+ $('step-sidewalk-note').hidden=!route.sidewalkConflicts.length;
+ updateSidewalkLegend(route);
  renderCrossings(route.crossings ?? []);
  updateResult(route);
  renderDirections(route.maneuvers);
@@ -420,35 +446,34 @@ let comparisonPreview;
 const comparisonHitLayer = 'comparison-route-hit-target';
 
 function renderComparison() {
- $('comparison-demo-label').hidden = !state.routes.some(route=>routeScore(route.crossings).demo);
  const comparisonStatus = $('comparison-status');
  comparisonStatus.hidden = state.routes.length > 1;
- comparisonStatus.textContent = 'No alternate walking routes were returned for these addresses.';
+ $('use-previewed-route').hidden = state.routes.length < 2;
+ comparisonStatus.textContent = 'No additional walking routes found.';
  for (let index = 0; index < maxWalkingRoutes; index++) {
   const option = $('route-option-' + index);
   const route = state.routes[index];
   option.hidden = !route;
   if (!route) continue;
   const selected = route === state.route;
-  const { value, covered, total, demo } = routeScore(route.crossings);
+  const { value } = routeScore(route.crossings);
   const street = [...route.maneuvers].sort((a,b)=>(b.length ?? 0)-(a.length ?? 0))
    .find(step=>step.street_names?.length)?.street_names[0];
   const score = option.querySelector('.option-score');
   score.textContent = value ?? '—';
   score.className = `option-score ${scoreColor(value)}`;
-  score.title = demo ? 'Demo score includes simulated values' : value === null ? 'No crossing score available' : `Verified scores for ${covered} of ${total} matched crossings`;
-  score.setAttribute('aria-label', score.title);
+  score.setAttribute('aria-label', value === null ? 'Crossing score unavailable' : `Crossing score ${value} out of 100`);
   option.setAttribute('aria-pressed', String(selected));
   option.toggleAttribute('data-previewed', route === comparisonPreview);
   option.querySelector('.option-selected').textContent = selected ? 'Selected' : 'Preview';
   option.querySelector('strong').textContent = `${route.minutes} min · ${route.miles.toFixed(2)} mi`;
-  option.querySelector('small').textContent = street ? `Via ${street}` : `Route ${index + 1}`;
-  option.querySelector('.option-demo').hidden = !demo;
-  const coverage = route.walkingGeometry.mappedPercent;
-  option.querySelector('.option-footways').textContent = coverage === null
-   ? 'Mapped path coverage unavailable'
-   : `${coverage}% matches mapped paths`;
+  option.querySelector('.option-street').textContent = street ? `Via ${street}` : `Route ${index + 1}`;
+  const count = route.crossings?.length;
+  option.querySelector('.option-crossings').textContent = count === undefined ? '— crossings' : `${count} ${count === 1 ? 'crossing' : 'crossings'}`;
  }
+}
+function updateSidewalkLegend(route) {
+ $('map-sidewalk-guidance').hidden=!route.sidewalkConflicts.length;
 }
 function alternativePaths(route) {
  return state.routes.filter(option=>option!==route).map(option=>option.path);
@@ -456,6 +481,7 @@ function alternativePaths(route) {
 function previewComparison(route) {
  if (state.detail !== 'comparison-sheet' || !route || route === comparisonPreview) return;
  comparisonPreview = route;
+ updateSidewalkLegend(route);
  drawRoutes(route, alternativePaths(route));
  renderCrossings(route.crossings ?? [], route);
  renderComparison();
@@ -591,7 +617,7 @@ function initializeMap(){
   map.addLayer({id:'alternate-route-lines',type:'line',source:'alternate-routes',paint:{'line-color':'#7898a7','line-width':4,'line-dasharray':[2,2]},layout:{'line-cap':'round','line-join':'round'}});
   map.addSource('walking-route',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   const matched = ['==',['get','mapped'],true];
-  const unmatched = ['==',['get','mapped'],false];
+  const unmatched = ['all',['==',['get','mapped'],false],['==',['get','useSidewalk'],false]];
   const lineLayout = {'line-cap':'round','line-join':'round'};
   map.addLayer({id:'route-outline',type:'line',source:'walking-route',
    paint:{'line-color':'#fff','line-width':7},layout:lineLayout});
@@ -599,17 +625,21 @@ function initializeMap(){
    paint:{'line-color':'#0c7890','line-width':4},layout:lineLayout});
   map.addLayer({id:'walking-route-approximate',type:'line',source:'walking-route',filter:unmatched,
    paint:{'line-color':'#b83f39','line-width':4,'line-dasharray':[1.2,1.1]},layout:lineLayout});
+  map.addLayer({id:'walking-route-use-sidewalk',type:'line',source:'walking-route',filter:['==',['get','useSidewalk'],true],
+   paint:{'line-color':'#976716','line-width':4,'line-dasharray':[0.45,1.4]},layout:lineLayout});
   map.addSource(comparisonHitLayer,{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:comparisonHitLayer,type:'line',source:comparisonHitLayer,
    paint:{'line-color':'#000','line-opacity':0,'line-width':18},
    layout:{'line-cap':'round','line-join':'round'}});
-  map.on('mousemove',comparisonHitLayer,event=>{
+  function previewMapRoute(event) {
    if (state.detail !== 'comparison-sheet' || !event.features?.length) return;
-   map.getCanvas().style.cursor = 'pointer';
+   if (event.type === 'mousemove') map.getCanvas().style.cursor = 'pointer';
    const routes = event.features.map(feature=>state.routes[feature.properties.index]);
    // Shared segments keep the current preview until the pointer reaches a distinct route.
    if (!routes.includes(comparisonPreview)) previewComparison(routes[0]);
-  });
+  }
+  map.on('mousemove',comparisonHitLayer,previewMapRoute);
+  map.on('click',comparisonHitLayer,previewMapRoute);
   map.on('mouseleave',comparisonHitLayer,()=>{map.getCanvas().style.cursor = '';});
  });
  map.on('error',e=>{if(!state.loaded) $('map-loader').textContent='Map tiles unavailable. Check network or map provider.';console.error('MapLibre:',e.error?.message||e);});
@@ -657,13 +687,18 @@ function closeRouteDetails() {
 }
 $('route-score').addEventListener('click',()=>showRouteDetails('score-sheet'));
 $('compare-routes').addEventListener('click',showComparison);
+$('use-previewed-route').addEventListener('click',()=>chooseRoute(state.routes.indexOf(comparisonPreview)));
 for (let index = 0; index < maxWalkingRoutes; index++) {
  const option = $('route-option-' + index);
  option.addEventListener('pointerenter',event=>{
   if (event.pointerType !== 'touch') previewComparison(state.routes[index]);
  });
  option.addEventListener('focus',()=>previewComparison(state.routes[index]));
- option.addEventListener('click',()=>chooseRoute(index));
+ option.addEventListener('click',event=>{
+  const isTouch = event.pointerType === 'touch' || (event.detail > 0 && window.matchMedia('(hover: none)').matches);
+  if (isTouch) previewComparison(state.routes[index]);
+  else chooseRoute(index);
+ });
 }
 for (const id of ['info','nav-sources']) $(id).addEventListener('click',()=>$('sources-dialog').showModal());
 restoreDirections();

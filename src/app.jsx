@@ -51,7 +51,7 @@ function App() {
               <CrosswiseAction type="button" className="maneuver" id="next-step"><img src={figmaIcon("straight")} alt="" /><span><strong id="maneuver-text"></strong><small>View walking directions</small></span></CrosswiseAction>
               <div className="walking-line-legend" aria-label="Map legend">
                 <span><i aria-hidden="true"></i>Mapped path match</span>
-                <span><i aria-hidden="true"></i>Sidewalk position unknown</span>
+                <span><i aria-hidden="true"></i>Sidewalk unconfirmed</span>
               </div>
             </section>
             <span id="map-demo-label" className="demo-map-label" hidden>Demo crossing scores</span>
@@ -138,7 +138,7 @@ function App() {
       <dialog id="sources-dialog">
         <h2>Crosswise research sources</h2>
         <p>Basemap by <a href="https://openfreemap.org/">OpenFreeMap</a> and <a href="https://openmaptiles.org/">OpenMapTiles</a>, using <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>.</p>
-        <p>The suggested route favors mapped sidewalks and footpaths. Comparisons can include routes from the standard pedestrian profile. Teal sections match separately mapped paths in OpenStreetMap. Slate sections show approximate routing geometry where the sidewalk position is unknown.</p>
+        <p>The suggested route favors mapped sidewalks and footpaths. Comparisons can include routes from the standard pedestrian profile. Teal sections match separately mapped paths in OpenStreetMap. Red dashes flag stretches where the sidewalk position is unconfirmed.</p>
         <p>Walking directions use Valhalla. Crossings come from OpenStreetMap and Bedford addresses come from MassGIS.</p>
         <p>Demo scores are simulated values for trying the interface. Reviewed scores are exploratory research estimates. A geometric match does not confirm that your route traverses a crossing.</p>
         <form method="dialog"><CrosswiseButton className="primary" type="submit">Close</CrosswiseButton></form>

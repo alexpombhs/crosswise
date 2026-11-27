@@ -603,7 +603,7 @@ function initializeMap(){
   map.addLayer({id:'walking-route',type:'line',source:'walking-route',filter:matched,
    paint:{'line-color':'#0c7890','line-width':4},layout:lineLayout});
   map.addLayer({id:'walking-route-approximate',type:'line',source:'walking-route',filter:unmatched,
-   paint:{'line-color':'#52667a','line-width':4},layout:lineLayout});
+   paint:{'line-color':'#b83f39','line-width':4,'line-dasharray':[1.2,1.1]},layout:lineLayout});
   map.addSource(comparisonHitLayer,{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:comparisonHitLayer,type:'line',source:comparisonHitLayer,
    paint:{'line-color':'#000','line-opacity':0,'line-width':18},

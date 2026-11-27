@@ -51,6 +51,17 @@ export function projectToRoute(point, path) {
 export function nearRoute(point, path) {
   return projectToRoute(point, path).meters;
 }
+export function crossingsAlongPath(records, path, maxMeters) {
+  const unique = new Map();
+  for (const record of records) {
+    if (!Number.isFinite(record.lon) || !Number.isFinite(record.lat)) continue;
+    const id = `${record.osmType}:${record.osmId}`;
+    if (unique.has(id)) continue;
+    const projection = projectToRoute([record.lon, record.lat], path);
+    if (projection.meters <= maxMeters) unique.set(id, { ...record, ...projection });
+  }
+  return Array.from(unique.values()).sort((a, b) => a.position - b.position);
+}
 export function bounds(path,pad=.0006){return [Math.min(...path.map(x=>x[1]))-pad,Math.min(...path.map(x=>x[0]))-pad,Math.max(...path.map(x=>x[1]))+pad,Math.max(...path.map(x=>x[0]))+pad];}
 export function decodePolyline6(shape){let lat=0,lon=0,index=0;const out=[];function num(){let r=0,shift=0,byte;do{byte=shape.charCodeAt(index++)-63;r|=(byte&31)<<shift;shift+=5;}while(byte>=32&&index<shape.length);return r&1?~(r>>1):r>>1;}while(index<shape.length){lat+=num();lon+=num();out.push([lon/1e6,lat/1e6]);}return out;}
 export function scoreColor(n){if(!Number.isFinite(n)||n<0||n>100)return'unscored';return n<50?'red':n<80?'orange':'green';}

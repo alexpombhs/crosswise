@@ -3,7 +3,7 @@ import { renderScenarioExplorer } from './scenario-explorer.jsx';
 import { renderCrossingRows } from './crossing-inventory.jsx';
 import { figmaIcon } from './assets.js';
 import { attachAddressLookup, resolveAddress } from './address-lookup.js';
-import { distance, initialRouteBearing, projectToRoute, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
+import { distance, initialRouteBearing, crossingsAlongPath, bounds, decodePolyline6, scoreColor, averageScores } from './geo.js';
 
 const $ = id => document.getElementById(id);
 const state = { map:null, gps:null, gpsWatch:null, markers:[], endpoints:[], route:null, routes:[], routeNames:[], detail:null, crossingScores:[], loaded:false };
@@ -251,7 +251,8 @@ async function queryCrossings(bbox) {
  if (!r.ok) throw Error('Crosswalk map service is temporarily unavailable.');
  const data = await r.json();
  if (data.remark || !Array.isArray(data.elements)) throw Error('Crosswalk map service returned incomplete results.');
- return data.elements.map(n => ({
+ const crossingNodes = new Set(data.elements.filter(element=>element.type === 'node').map(element=>element.id));
+ return data.elements.filter(element=>!element.nodes?.some(id=>crossingNodes.has(id))).map(n => ({
   osmType:n.type, osmId:n.id, lon:n.lon??n.center?.lon, lat:n.lat??n.center?.lat,
   name:n.tags?.name, roadNames:n.tags?.['addr:street'] ? [n.tags['addr:street']] : [],
  }));
@@ -271,14 +272,8 @@ async function loadCrossings(path){
  const insideInventory = inventory && bbox.every((edge, index) =>
   index < 2 ? edge >= inventory.bounds[index] : edge <= inventory.bounds[index]);
  const records = insideInventory ? inventory.crossings : await queryCrossings(bbox);
- const candidates = records
-  .map(c => ({...c, ...projectToRoute([c.lon,c.lat],path)}))
-  .filter(c => c.meters <= crossingMatchMeters)
-  .sort((a,b) => a.meters - b.meters);
- // Remove duplicate representations of the same physical crossing.
- const unique=[];
- for(const c of candidates){if(!unique.some(x=>distance([x.lon,x.lat],[c.lon,c.lat])<8))unique.push(c);}
- return unique.sort((a,b)=>a.position-b.position).map(c=>{
+ // Match each mapped crossing by its source identity. Adjacent crossings can be distinct.
+ return crossingsAlongPath(records,path,crossingMatchMeters).map(c=>{
   const reviewed = matchScore(c,state.crossingScores);
   const score = reviewed?.safetyScore ?? demoCrossingScore(c);
   return {...c,name:c.name||'Mapped crossing',score,color:scoreColor(score),demo:!reviewed,verifiedSource:reviewed?.source};

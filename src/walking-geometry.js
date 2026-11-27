@@ -2,7 +2,7 @@ const metersPerLatitudeDegree = 111195;
 const metersPerLongitudeDegree = metersPerLatitudeDegree * Math.cos(42.49 * Math.PI / 180);
 const cellMeters = 32;
 const matchMeters = 1.8;
-const sampleMeters = 7;
+const minimumAlignment = Math.cos(Math.PI / 6);
 const meters = ([lon, lat]) => [(lon + 71.27) * metersPerLongitudeDegree, (lat - 42.49) * metersPerLatitudeDegree];
 const cell = value => Math.floor(value / cellMeters);
 const key = (x, y) => `${x},${y}`;
@@ -32,12 +32,40 @@ export function indexFootways(paths) {
   return cells;
 }
 
-function pointMatchesFootway(cells, [lon, lat]) {
-  const [x, y] = meters([lon, lat]);
-  return cells.get(key(cell(x), cell(y)))?.some(({ ax, ay, dx, dy, lengthSquared }) => {
-    const fraction = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / lengthSquared));
-    return Math.hypot(x - ax - dx * fraction, y - ay - dy * fraction) <= matchMeters;
-  }) ?? false;
+function clipRange(start, delta, min, max, interval) {
+  if (Math.abs(delta) < 1e-9) return start >= min && start <= max;
+  const first = (min - start) / delta;
+  const second = (max - start) / delta;
+  interval[0] = Math.max(interval[0], Math.min(first, second));
+  interval[1] = Math.min(interval[1], Math.max(first, second));
+  return interval[0] < interval[1];
+}
+
+function coveredIntervals(cells, ax, ay, bx, by, length) {
+  const candidates = new Set();
+  for (let x = cell(Math.min(ax, bx)); x <= cell(Math.max(ax, bx)); x++) {
+    for (let y = cell(Math.min(ay, by)); y <= cell(Math.max(ay, by)); y++) {
+      for (const segment of cells.get(key(x, y)) ?? []) candidates.add(segment);
+    }
+  }
+  const dx = bx - ax;
+  const dy = by - ay;
+  const intervals = [];
+  for (const segment of candidates) {
+    const segmentLength = Math.sqrt(segment.lengthSquared);
+    const ux = segment.dx / segmentLength;
+    const uy = segment.dy / segmentLength;
+    const along = dx * ux + dy * uy;
+    if (Math.abs(along) < minimumAlignment * length) continue;
+    const x = ax - segment.ax;
+    const y = ay - segment.ay;
+    const interval = [0, 1];
+    if (clipRange(x * ux + y * uy, along, 0, segmentLength, interval)
+      && clipRange(x * uy - y * ux, dx * uy - dy * ux, -matchMeters, matchMeters, interval)) {
+      intervals.push([interval[0] < 1e-8 ? 0 : interval[0], interval[1] > 1 - 1e-8 ? 1 : interval[1]]);
+    }
+  }
+  return intervals.sort((a, b) => a[0] - b[0]);
 }
 
 export function classifyWalkingPath(path, footways, bounds) {
@@ -45,7 +73,11 @@ export function classifyWalkingPath(path, footways, bounds) {
   const sections = [];
   let total = 0;
   let matched = 0;
-  let previousMatches = pointMatchesFootway(footways, path[0]);
+  function appendSection(from, to, mapped) {
+    const section = sections.at(-1);
+    if (section?.mapped === mapped) section.path.push(to);
+    else sections.push({ path: [from, to], mapped });
+  }
   for (let index = 1; index < path.length; index++) {
     const from = path[index - 1];
     const to = path[index];
@@ -53,20 +85,23 @@ export function classifyWalkingPath(path, footways, bounds) {
     const [bx, by] = meters(to);
     const length = Math.hypot(bx - ax, by - ay);
     if (!length) continue;
-    const steps = Math.ceil(length / sampleMeters);
-    let start = from;
-    for (let step = 1; step <= steps; step++) {
-      const end = step === steps ? to : interpolate(from, to, step / steps);
-      const endMatches = pointMatchesFootway(footways, end);
-      const mapped = previousMatches && endMatches && pointMatchesFootway(footways, interpolate(start, end, 0.5));
-      const section = sections.at(-1);
-      if (section?.mapped === mapped) section.path.push(end);
-      else sections.push({ path: [start, end], mapped });
-      total += length / steps;
-      if (mapped) matched += length / steps;
-      start = end;
-      previousMatches = endMatches;
+    total += length;
+    const covered = coveredIntervals(footways, ax, ay, bx, by, length);
+    // Union overlaps before drawing, so route vertices do not affect coverage boundaries.
+    const merged = [];
+    for (const interval of covered) {
+      const last = merged.at(-1);
+      if (last && interval[0] <= last[1] + 1e-8) last[1] = Math.max(last[1], interval[1]);
+      else merged.push(interval);
     }
+    let position = 0;
+    for (const [start, end] of merged) {
+      if (start > position) appendSection(interpolate(from, to, position), interpolate(from, to, start), false);
+      appendSection(interpolate(from, to, start), interpolate(from, to, end), true);
+      matched += length * (end - start);
+      position = end;
+    }
+    if (position < 1) appendSection(interpolate(from, to, position), to, false);
   }
   const insideCoverage = !bounds || path.every(([lon, lat]) =>
     lon >= bounds[0] && lat >= bounds[1] && lon <= bounds[2] && lat <= bounds[3]);
